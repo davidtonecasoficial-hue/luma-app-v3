@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Luma Player</string>
+    <string name="notification_channel_playback">Reprodução Multimédia</string>
+    <string name="notification_channel_playback_desc">Controlos de reprodução de música em segundo plano</string>
+    <string name="widget_subtitle_default">Toque para abrir a sua música</string>
+    <string name="widget_artwork_desc">Capa da música atual</string>
+    <string name="widget_prev_desc">Faixa anterior</string>
+    <string name="widget_play_desc">Reproduzir ou pausar</string>
+    <string name="widget_next_desc">Próxima faixa</string>
+</resources>

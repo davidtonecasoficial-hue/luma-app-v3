@@ -1,0 +1,6 @@
+{
+  "name": "Luma Player",
+  "description": "Reprodutor de música e vídeo offline em Kotlin e Jetpack Compose com interface Liquid Glass, navegação inferior com indicador deslizante e barra de pesquisa transformável.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
