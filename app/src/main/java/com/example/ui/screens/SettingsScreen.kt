@@ -83,6 +83,7 @@ import androidx.compose.ui.unit.sp
 import com.example.config.AppConfig
 import com.example.data.media.MediaPermissionStatus
 import com.example.data.model.AccentPalette
+import com.example.data.model.AppLanguage
 import com.example.data.model.AppSettings
 import com.example.data.model.AppThemeStyle
 import com.example.data.model.ArtworkShape
@@ -156,9 +157,13 @@ fun SettingsScreen(
     onSetPauseHistory: (Boolean) -> Unit = {},
     onReorganizeLibrary: () -> Unit = {},
     onExportBackup: () -> Unit = {},
-    onImportBackup: () -> Unit = {}
+    onImportBackup: () -> Unit = {},
+    onSetAppLanguage: (AppLanguage) -> Unit = {},
+    onSetShakeToSkip: (Boolean) -> Unit = {},
+    onSetQueueRadio: (Boolean) -> Unit = {}
 ) {
     val glass = LocalLumaGlass.current
+    val strings = com.example.ui.theme.LocalLumaStrings.current
     var showClearHistoryDialog by remember { mutableStateOf(false) }
     var showResetStatsDialog by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
@@ -245,20 +250,64 @@ fun SettingsScreen(
     ) {
         item {
             Text(
-                text = "Ajustes",
+                text = strings.settingsTitle,
                 style = MaterialTheme.typography.headlineLarge,
                 color = MaterialTheme.colorScheme.onBackground
             )
+        }
+
+        // 0. Language Selector
+        item {
+            Column {
+                SettingsGroupTitle(strings.settingsLanguageSection)
+                LiquidGlassSurface(shape = RoundedCornerShape(22.dp)) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(strings.settingsLanguageTitle, style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                text = settings.appLanguage.nativeLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = glass.accentPrimary
+                            )
+                        }
+                        Text(
+                            text = strings.settingsLanguageSubtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = glass.textSecondary
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            AppLanguage.entries.forEach { lang ->
+                                ChoiceChipPill(
+                                    label = lang.nativeLabel,
+                                    selected = settings.appLanguage == lang,
+                                    onClick = { onSetAppLanguage(lang) },
+                                    testTag = "language_${lang.name.lowercase()}"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 1. Personalization, Themes & Glass Physics
         item {
             LumaSectionEntrance(index = 0) {
                 Column {
-                    SettingsGroupTitle("Aparência e Personalização")
+                    SettingsGroupTitle(strings.settingsAppearanceSection)
                     LiquidGlassSurface(shape = RoundedCornerShape(22.dp)) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                            Text("Aparência", style = MaterialTheme.typography.titleSmall)
+                            Text(strings.settingsAppearanceMode, style = MaterialTheme.typography.titleSmall)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -325,7 +374,7 @@ fun SettingsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Temas (${AppThemeStyle.entries.size})", style = MaterialTheme.typography.titleSmall)
+                                Text("${strings.settingsThemesLabel} (${AppThemeStyle.entries.size})", style = MaterialTheme.typography.titleSmall)
                                 Text(
                                     text = settings.themeStyle.title,
                                     style = MaterialTheme.typography.labelMedium,
@@ -507,7 +556,7 @@ fun SettingsScreen(
         item {
             LumaSectionEntrance(index = 1) {
                 Column {
-                    SettingsGroupTitle("Reprodução e Leitor")
+                    SettingsGroupTitle(strings.settingsPlaybackSection)
                     LiquidGlassSurface(shape = RoundedCornerShape(22.dp)) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(
@@ -650,6 +699,20 @@ fun SettingsScreen(
                                 checked = settings.crossfadeEnabled,
                                 onCheckedChange = onSetCrossfade
                             )
+                            SettingsToggleRow(
+                                title = strings.shakeSkipLabel,
+                                subtitle = "Agite o dispositivo para saltar para a próxima faixa",
+                                checked = settings.shakeToSkipEnabled,
+                                onCheckedChange = onSetShakeToSkip,
+                                testTag = "toggle_shake_to_skip"
+                            )
+                            SettingsToggleRow(
+                                title = strings.queueRadioLabel,
+                                subtitle = "Adiciona faixas semelhantes automaticamente no fim da fila",
+                                checked = settings.queueRadioEnabled,
+                                onCheckedChange = onSetQueueRadio,
+                                testTag = "toggle_queue_radio"
+                            )
                         }
                     }
                 }
@@ -660,7 +723,7 @@ fun SettingsScreen(
         item {
             LumaSectionEntrance(index = 2) {
                 Column {
-                    SettingsGroupTitle("Biblioteca e Estatísticas Locais")
+                    SettingsGroupTitle(strings.settingsLibrarySection)
                     LiquidGlassSurface(shape = RoundedCornerShape(22.dp)) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             val permSubtitle = when {
@@ -795,7 +858,7 @@ fun SettingsScreen(
         item {
             LumaSectionEntrance(index = 3) {
                 Column {
-                    SettingsGroupTitle("Backup e Privacidade")
+                    SettingsGroupTitle(strings.settingsBackupSection)
                     LiquidGlassSurface(shape = RoundedCornerShape(22.dp)) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             SettingsToggleRow(
@@ -829,7 +892,7 @@ fun SettingsScreen(
         item {
             LumaSectionEntrance(index = 4) {
                 Column {
-                    SettingsGroupTitle("Sistema e Sobre")
+                    SettingsGroupTitle(strings.settingsAboutSection)
                     LiquidGlassSurface(shape = RoundedCornerShape(22.dp)) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             SettingsActionRow(
@@ -847,14 +910,37 @@ fun SettingsScreen(
                             )
                             SettingsActionRow(
                                 icon = Icons.Rounded.Info,
-                                title = "Sobre",
-                                subtitle = "Programador, versão ${AppConfig.APP_VERSION}, privacidade e licenças",
+                                title = strings.aboutTitle,
+                                subtitle = "Programador, ${strings.aboutVersionPrefix.lowercase()} ${AppConfig.APP_VERSION}, privacidade e licenças",
                                 onClick = onOpenAbout,
                                 testTag = "settings_about_row"
                             )
                         }
                     }
                 }
+            }
+        }
+
+        // Footer: App Version & Developer Credit
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 10.dp)
+                    .testTag("settings_version_footer"),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "${AppConfig.APP_NAME} • ${strings.aboutVersionPrefix} ${AppConfig.APP_VERSION}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = glass.accentPrimary
+                )
+                Text(
+                    text = strings.aboutDeveloperCredit,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = glass.textSecondary
+                )
             }
         }
     }

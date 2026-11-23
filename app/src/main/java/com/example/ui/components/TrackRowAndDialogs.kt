@@ -48,9 +48,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.rememberScrollState
@@ -87,7 +87,9 @@ fun TrackListItem(
     onSmartMix: (() -> Unit)? = null,
     onEditMetadata: (() -> Unit)? = null,
     onRemoveFromLibrary: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    leadingLabel: String? = null,
+    extraMenuActions: (@Composable (closeMenu: () -> Unit) -> Unit)? = null
 ) {
     val glass = LocalLumaGlass.current
     var menuExpanded by remember { mutableStateOf(false) }
@@ -99,7 +101,7 @@ fun TrackListItem(
         onClick = onPlay,
         modifier = modifier
             .fillMaxWidth()
-            .alpha(if (item.isAvailable) 1f else 0.56f)
+            .graphicsLayer { alpha = if (item.isAvailable) 1f else 0.56f }
     ) {
         Row(
             modifier = Modifier
@@ -107,6 +109,14 @@ fun TrackListItem(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (!leadingLabel.isNullOrBlank()) {
+                Text(
+                    text = leadingLabel,
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                    color = if (isPlayingNow) glass.accentPrimary else glass.textSecondary,
+                    modifier = Modifier.width(24.dp)
+                )
+            }
             Box(contentAlignment = Alignment.Center) {
                 MediaArtwork(
                     artworkPath = item.artworkPath,
@@ -159,17 +169,28 @@ fun TrackListItem(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
-                val subtitle = buildString {
-                    append(item.artist)
-                    if (item.mediaType == MediaType.AUDIO && item.album.isNotBlank()) {
-                        append(" • ")
-                        append(item.album)
-                    } else if (item.mediaType == MediaType.VIDEO && item.videoWidth > 0) {
-                        append(" • ${item.videoWidth}x${item.videoHeight}")
+                val subtitle = remember(
+                    item.id,
+                    item.artist,
+                    item.album,
+                    item.mediaType,
+                    item.videoWidth,
+                    item.videoHeight,
+                    item.isAvailable
+                ) {
+                    val base = buildString {
+                        append(item.artist)
+                        if (item.mediaType == MediaType.AUDIO && item.album.isNotBlank()) {
+                            append(" • ")
+                            append(item.album)
+                        } else if (item.mediaType == MediaType.VIDEO && item.videoWidth > 0) {
+                            append(" • ${item.videoWidth}x${item.videoHeight}")
+                        }
                     }
+                    if (item.isAvailable) base else "Ficheiro indisponível • $base"
                 }
                 Text(
-                    text = if (item.isAvailable) subtitle else "Ficheiro indisponível • $subtitle",
+                    text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (item.isAvailable) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
                     maxLines = 1,
@@ -177,8 +198,9 @@ fun TrackListItem(
                 )
             }
 
+            val formattedDuration = remember(item.durationMs) { formatDuration(item.durationMs) }
             Text(
-                text = formatDuration(item.durationMs),
+                text = formattedDuration,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 6.dp)
@@ -279,6 +301,7 @@ fun TrackListItem(
                             }
                         )
                     }
+                    extraMenuActions?.invoke { menuExpanded = false }
                     if (onRemoveFromLibrary != null) {
                         DropdownMenuItem(
                             text = { Text("Remover da biblioteca", color = MaterialTheme.colorScheme.error) },
@@ -784,7 +807,7 @@ fun SmartPlaylistDialog(
                 modifier = Modifier.height(310.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(SmartPlaylistRule.entries) { rule ->
+                items(SmartPlaylistRule.entries, key = { it.name }) { rule ->
                     LiquidGlassSurface(
                         shape = RoundedCornerShape(14.dp),
                         onClick = { onSelectRule(rule) }
@@ -870,16 +893,19 @@ fun DuplicatesInspectorDialog(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = LocalLumaGlass.current.accentPrimary
                                     )
+                                    val keepId = com.example.data.media.LumaCollectionsEngine.pickRecommendedKeepId(group)
                                     group.items.forEachIndexed { idx, copy ->
+                                        val isRecommendedKeep = if (keepId != null) copy.id == keepId else idx == 0
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
-                                                    text = copy.folderPath.ifBlank { copy.folderName },
+                                                    text = copy.folderPath.ifBlank { copy.folderName } +
+                                                        if (isRecommendedKeep) " • Melhor qualidade" else "",
                                                     style = MaterialTheme.typography.bodyMedium,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    color = if (isRecommendedKeep) glass.accentPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
@@ -889,7 +915,7 @@ fun DuplicatesInspectorDialog(
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
                                             }
-                                            if (idx > 0) {
+                                            if (!isRecommendedKeep) {
                                                 IconButton(onClick = { onRemoveIndexEntry(copy) }) {
                                                     Icon(
                                                         Icons.Rounded.DeleteOutline,

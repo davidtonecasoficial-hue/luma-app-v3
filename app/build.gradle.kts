@@ -16,8 +16,8 @@ android {
     applicationId = "com.aistudio.lumaplayer.vxmkrp"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "4.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -63,7 +63,20 @@ android {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      all {
+        it.systemProperty(
+          "robolectric.dependency.repo.url",
+          System.getProperty(
+            "robolectric.dependency.repo.url",
+            "https://maven-central.storage-download.googleapis.com/maven2"
+          )
+        )
+      }
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true

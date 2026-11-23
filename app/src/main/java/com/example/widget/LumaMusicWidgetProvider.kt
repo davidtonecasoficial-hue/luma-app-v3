@@ -11,8 +11,8 @@ import android.net.Uri
 import android.widget.RemoteViews
 import com.example.MainActivity
 import com.example.R
+import com.example.config.LumaCrashGuard
 import com.example.player.LumaPlaybackService
-import java.io.File
 
 class LumaMusicWidgetProvider : AppWidgetProvider() {
 
@@ -64,21 +64,25 @@ class LumaMusicWidgetProvider : AppWidgetProvider() {
             isPlaying: Boolean,
             artworkPath: String?
         ) {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                .putString(KEY_TITLE, title)
-                .putString(KEY_ARTIST, artist)
-                .putBoolean(KEY_PLAYING, isPlaying)
-                .putString(KEY_ARTWORK, artworkPath)
-                .apply()
-            refreshAllWidgets(context)
+            runCatching {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                    .putString(KEY_TITLE, title)
+                    .putString(KEY_ARTIST, artist)
+                    .putBoolean(KEY_PLAYING, isPlaying)
+                    .putString(KEY_ARTWORK, artworkPath)
+                    .apply()
+                refreshAllWidgets(context)
+            }
         }
 
         fun refreshAllWidgets(context: Context) {
-            val manager = AppWidgetManager.getInstance(context)
-            val component = ComponentName(context, LumaMusicWidgetProvider::class.java)
-            val ids = manager.getAppWidgetIds(component)
-            if (ids.isNotEmpty()) {
-                ids.forEach { id -> updateSingleWidget(context, manager, id) }
+            runCatching {
+                val manager = AppWidgetManager.getInstance(context) ?: return
+                val component = ComponentName(context, LumaMusicWidgetProvider::class.java)
+                val ids = manager.getAppWidgetIds(component)
+                if (ids.isNotEmpty()) {
+                    ids.forEach { id -> updateSingleWidget(context, manager, id) }
+                }
             }
         }
 
@@ -105,25 +109,11 @@ class LumaMusicWidgetProvider : AppWidgetProvider() {
 
             var artworkLoaded = false
             if (!artworkPath.isNullOrBlank()) {
-                runCatching {
-                    if (artworkPath.startsWith("content://")) {
-                        context.contentResolver.openInputStream(Uri.parse(artworkPath))?.use { stream ->
-                            val bmp = BitmapFactory.decodeStream(stream)
-                            if (bmp != null) {
-                                views.setImageViewBitmap(R.id.widget_artwork, bmp)
-                                artworkLoaded = true
-                            }
-                        }
-                    } else {
-                        val file = File(artworkPath)
-                        if (file.exists()) {
-                            val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
-                            val bmp = BitmapFactory.decodeFile(file.absolutePath, opts)
-                            if (bmp != null) {
-                                views.setImageViewBitmap(R.id.widget_artwork, bmp)
-                                artworkLoaded = true
-                            }
-                        }
+                val bmp = LumaCrashGuard.decodeSampledBitmap(context, artworkPath, maxDimensionPx = 256)
+                if (bmp != null && !bmp.isRecycled) {
+                    runCatching {
+                        views.setImageViewBitmap(R.id.widget_artwork, bmp)
+                        artworkLoaded = true
                     }
                 }
             }
@@ -145,7 +135,7 @@ class LumaMusicWidgetProvider : AppWidgetProvider() {
             views.setOnClickPendingIntent(R.id.widget_btn_play_pause, broadcastPending(context, ACTION_WIDGET_PLAY_PAUSE, 102))
             views.setOnClickPendingIntent(R.id.widget_btn_next, broadcastPending(context, ACTION_WIDGET_NEXT, 103))
 
-            appWidgetManager.updateAppWidget(appWidgetId, views)
+            runCatching { appWidgetManager.updateAppWidget(appWidgetId, views) }
         }
 
         private fun broadcastPending(context: Context, action: String, requestCode: Int): PendingIntent {

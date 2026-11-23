@@ -32,14 +32,17 @@ import androidx.compose.material.icons.automirrored.rounded.FormatAlignLeft
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.FileOpen
 import androidx.compose.material.icons.rounded.FormatAlignCenter
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.ZoomIn
 import androidx.compose.material.icons.rounded.ZoomOut
@@ -51,6 +54,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -81,6 +85,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.media.LrcParser
 import com.example.data.media.LyricLine
+import com.example.data.media.OnlineLyricsCandidate
 import com.example.data.model.AppSettings
 import com.example.data.model.CustomAudioPreset
 import com.example.data.model.MediaItemEntity
@@ -92,8 +97,10 @@ import com.example.player.PlaybackUiState
 import com.example.ui.theme.LiquidGlassBackground
 import com.example.ui.theme.LiquidGlassSurface
 import com.example.ui.theme.LocalLumaGlass
+import com.example.ui.theme.LocalLumaStrings
 import com.example.ui.theme.LumaAnimatedSwitch
 import com.example.ui.theme.formatDuration
+import com.example.ui.viewmodel.LyricsSearchUiState
 
 @Composable
 fun StudioEqualizerSheetContent(
@@ -417,9 +424,14 @@ fun LyricsStudioSheetContent(
     onSaveLyricsAndOffset: (Long, String?, Long) -> Unit,
     onUpdateFontScale: (Float) -> Unit,
     onToggleCentered: (Boolean) -> Unit,
-    onOpenFullScreen: () -> Unit
+    onOpenFullScreen: () -> Unit,
+    lyricsSearchState: LyricsSearchUiState = LyricsSearchUiState(),
+    onSearchOnlineLyrics: (artist: String, title: String) -> Unit = { _, _ -> },
+    onApplyOnlineLyrics: (OnlineLyricsCandidate) -> Unit = {},
+    onClearLyricsSearchResults: () -> Unit = {}
 ) {
     val glass = LocalLumaGlass.current
+    val strings = LocalLumaStrings.current
     val parsed = remember(track.embeddedLyrics) { LrcParser.parse(track.embeddedLyrics) }
     val activeIdx = remember(parsed, positionMs, track.lyricsOffsetMs) {
         if (parsed.isTimed) LrcParser.findActiveLineIndex(parsed.lines, positionMs, track.lyricsOffsetMs) else -1
@@ -430,6 +442,12 @@ fun LyricsStudioSheetContent(
     val editableLines = remember(track.id, track.embeddedLyrics) {
         mutableStateListOf<LyricLine>().apply { addAll(parsed.lines) }
     }
+    var showOnlinePanel by remember(track.id) { mutableStateOf(false) }
+    var showManualEditor by remember(track.id) { mutableStateOf(false) }
+    var searchArtist by remember(track.id) {
+        mutableStateOf(if (track.artist.equals("Artista desconhecido", true)) "" else track.artist)
+    }
+    var searchTitle by remember(track.id) { mutableStateOf(track.title) }
 
     LaunchedEffect(activeIdx) {
         if (!manualSyncMode && parsed.isTimed && activeIdx >= 0) {
@@ -447,9 +465,9 @@ fun LyricsStudioSheetContent(
             Icon(Icons.Rounded.Lyrics, contentDescription = null, tint = glass.accentPrimary)
             Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("Luma Lyrics Studio", style = MaterialTheme.typography.titleLarge)
+                Text(strings.lyricsStudioTitle, style = MaterialTheme.typography.titleLarge)
                 val subtitle = buildString {
-                    append(if (parsed.isTimed) "Karaoke LRC" else "Texto estático")
+                    append(if (parsed.isTimed) strings.lyricsSyncedTag else strings.lyricsPlainTag)
                     if (parsed.hasTranslations) append(" • Bilingue")
                     if (track.lyricsOffsetMs != 0L) append(" • Ajuste ${track.lyricsOffsetMs}ms")
                 }
@@ -460,10 +478,157 @@ fun LyricsStudioSheetContent(
                     Icon(Icons.Rounded.Fullscreen, contentDescription = "Ecrã inteiro", tint = glass.textPrimary)
                 }
             }
-            OutlinedButton(onClick = onImportLyrics) {
+        }
+
+        // Primary Source Actions: Search Online + Local .lrc/.txt + Manual Paste/Edit
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(
+                onClick = {
+                    showOnlinePanel = true
+                    onSearchOnlineLyrics(searchArtist, searchTitle)
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = glass.accentPrimary,
+                    contentColor = glass.onAccent
+                ),
+                modifier = Modifier.testTag("lyrics_search_online_button")
+            ) {
+                Icon(Icons.Rounded.Public, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (lyricsSearchState.isSearching) strings.lyricsSearchingOnline else strings.lyricsSearchOnline)
+            }
+            OutlinedButton(
+                onClick = onImportLyrics,
+                modifier = Modifier.testTag("lyrics_import_local_button")
+            ) {
                 Icon(Icons.Rounded.FileOpen, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(".lrc")
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(strings.lyricsImportLocal)
+            }
+            OutlinedButton(
+                onClick = { showManualEditor = true },
+                modifier = Modifier.testTag("lyrics_manual_edit_button")
+            ) {
+                Icon(Icons.Rounded.EditNote, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(strings.lyricsPasteOrEdit)
+            }
+        }
+
+        // Expandable Online Search Panel & Results
+        if (showOnlinePanel) {
+            LiquidGlassSurface(shape = RoundedCornerShape(16.dp), elevated = true) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = searchTitle,
+                            onValueChange = { searchTitle = it },
+                            singleLine = true,
+                            label = { Text(strings.lyricsTitleQuery) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = searchArtist,
+                            onValueChange = { searchArtist = it },
+                            singleLine = true,
+                            label = { Text(strings.lyricsArtistQuery) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = {
+                            showOnlinePanel = false
+                            onClearLyricsSearchResults()
+                        }) {
+                            Text(strings.closeLabel)
+                        }
+                        Button(
+                            onClick = { onSearchOnlineLyrics(searchArtist, searchTitle) },
+                            enabled = !lyricsSearchState.isSearching && (searchTitle.isNotBlank() || searchArtist.isNotBlank()),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = glass.accentPrimary,
+                                contentColor = glass.onAccent
+                            )
+                        ) {
+                            Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(strings.lyricsSearchOnline)
+                        }
+                    }
+
+                    if (lyricsSearchState.isSearching) {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = glass.accentPrimary
+                        )
+                    } else if (lyricsSearchState.errorMessage != null) {
+                        Text(
+                            text = lyricsSearchState.errorMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = glass.error
+                        )
+                    }
+
+                    if (lyricsSearchState.trackId == track.id && lyricsSearchState.results.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            lyricsSearchState.results.take(4).forEach { candidate ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(glass.textPrimary.copy(alpha = 0.05f))
+                                        .clickable {
+                                            onApplyOnlineLyrics(candidate)
+                                            showOnlinePanel = false
+                                        }
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = candidate.trackName,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "${candidate.artistName} • ${candidate.source}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = glass.textSecondary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = if (candidate.isSynced) strings.lyricsSyncedTag else strings.lyricsPlainTag,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = glass.accentPrimary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -554,7 +719,7 @@ fun LyricsStudioSheetContent(
 
         if (parsed.lines.isEmpty()) {
             Text(
-                text = "Este ficheiro não contém letras. Carregue um ficheiro .lrc ou .txt — linhas bilingues com \" | \" mostram tradução automática.",
+                text = strings.lyricsEmptyHint,
                 style = MaterialTheme.typography.bodyLarge,
                 color = glass.textSecondary
             )
@@ -608,10 +773,42 @@ fun LyricsStudioSheetContent(
                 }
             }
             TextButton(onClick = onClearLyrics, modifier = Modifier.align(Alignment.End)) {
-                Text("Remover letra associada", color = MaterialTheme.colorScheme.error)
+                Text(strings.lyricsRemove, color = MaterialTheme.colorScheme.error)
             }
         }
         Spacer(modifier = Modifier.height(14.dp))
+    }
+
+    if (showManualEditor) {
+        var editedText by remember(track.id, track.embeddedLyrics) {
+            mutableStateOf(track.embeddedLyrics.orEmpty())
+        }
+        AlertDialog(
+            onDismissRequest = { showManualEditor = false },
+            containerColor = glass.surfaceElevated,
+            title = { Text(strings.lyricsPasteOrEdit) },
+            text = {
+                OutlinedTextField(
+                    value = editedText,
+                    onValueChange = { editedText = it },
+                    label = { Text("Texto ou LRC [00:12.00]") },
+                    minLines = 6,
+                    maxLines = 12,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onSaveLyricsAndOffset(track.id, editedText.trim().ifBlank { null }, track.lyricsOffsetMs)
+                        showManualEditor = false
+                    }
+                ) { Text(strings.lyricsSaveChanges) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showManualEditor = false }) { Text(strings.cancelLabel) }
+            }
+        )
     }
 }
 

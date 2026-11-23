@@ -1,17 +1,23 @@
 package com.example.data.media
 
 import android.net.Uri
+import com.example.data.local.CustomCollectionDao
 import com.example.data.local.HistoryDao
+import com.example.data.local.ListeningSessionDao
 import com.example.data.local.MediaDao
 import com.example.data.local.PlaylistDao
 import com.example.data.local.QueueDao
 import com.example.data.model.AlbumSummary
 import com.example.data.model.ArtistSummary
+import com.example.data.model.CollectionTrackCrossRef
+import com.example.data.model.CustomCollectionEntity
+import com.example.data.model.CustomCollectionWithTracks
 import com.example.data.model.DuplicateGroup
 import com.example.data.model.FolderSummary
 import com.example.data.model.LibraryFilter
 import com.example.data.model.GenreSummary
 import com.example.data.model.HistoryWithMedia
+import com.example.data.model.ListeningSessionEntity
 import com.example.data.model.MediaItemEntity
 import com.example.data.model.MediaType
 import com.example.data.model.MoodType
@@ -21,10 +27,16 @@ import com.example.data.model.PlaylistTrackCrossRef
 import com.example.data.model.PlaylistWithTracks
 import com.example.data.model.SearchFilter
 import com.example.data.model.SortOrder
+import androidx.compose.runtime.Immutable
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 
+@Immutable
 data class SearchResultsBundle(
     val songs: List<MediaItemEntity> = emptyList(),
     val albums: List<AlbumSummary> = emptyList(),
@@ -41,7 +53,9 @@ class MediaRepository(
     private val playlistDao: PlaylistDao,
     private val historyDao: HistoryDao,
     private val queueDao: QueueDao,
-    private val scanner: MediaScanner
+    private val scanner: MediaScanner,
+    private val customCollectionDao: CustomCollectionDao? = null,
+    private val listeningSessionDao: ListeningSessionDao? = null
 ) {
     val allMedia: Flow<List<MediaItemEntity>> = mediaDao.observeAllMedia()
     val audioTracks: Flow<List<MediaItemEntity>> = mediaDao.observeByType(MediaType.AUDIO)
@@ -61,8 +75,30 @@ class MediaRepository(
             pl.copy(tracks = pl.tracks.sortedBy { posMap[it.id] ?: Int.MAX_VALUE })
         }
     }
+        .flowOn(Dispatchers.Default)
+        .distinctUntilChanged()
+    val customCollections: Flow<List<CustomCollectionWithTracks>> = if (customCollectionDao != null) {
+        combine(
+            customCollectionDao.observeCollectionsWithTracks(),
+            customCollectionDao.observeAllTrackRefs()
+        ) { rawCollections, allRefs ->
+            val refsByCollection = allRefs.groupBy { it.collectionId }
+            rawCollections.map { col ->
+                val posMap = refsByCollection[col.collection.id]
+                    ?.associate { it.mediaId to it.position }
+                    .orEmpty()
+                col.copy(tracks = col.tracks.sortedBy { posMap[it.id] ?: Int.MAX_VALUE })
+            }
+        }
+            .flowOn(Dispatchers.Default)
+            .distinctUntilChanged()
+    } else {
+        flowOf(emptyList())
+    }
     val history: Flow<List<HistoryWithMedia>> = historyDao.observeHistory()
     val insightsHistory: Flow<List<HistoryWithMedia>> = historyDao.observeInsightsHistory()
+    val listeningSessions: Flow<List<ListeningSessionEntity>> =
+        listeningSessionDao?.observeRecentSessions() ?: flowOf(emptyList())
 
     val albums: Flow<List<AlbumSummary>> = audioTracks.map { tracks ->
         tracks.groupBy { it.album.ifBlank { "Álbum desconhecido" } }
@@ -80,6 +116,8 @@ class MediaRepository(
             }
             .sortedBy { it.name.lowercase() }
     }
+        .flowOn(Dispatchers.Default)
+        .distinctUntilChanged()
 
     val artists: Flow<List<ArtistSummary>> = audioTracks.map { tracks ->
         tracks.groupBy { ArtistNormalizer.artistGroupingKey(it.artist, it.fileName) }
@@ -100,6 +138,8 @@ class MediaRepository(
             }
             .sortedBy { it.name.lowercase() }
     }
+        .flowOn(Dispatchers.Default)
+        .distinctUntilChanged()
 
     val folders: Flow<List<FolderSummary>> = allMedia.map { items ->
         items.groupBy { it.folderName.ifBlank { "Importados" } }
@@ -113,6 +153,8 @@ class MediaRepository(
             }
             .sortedBy { it.name.lowercase() }
     }
+        .flowOn(Dispatchers.Default)
+        .distinctUntilChanged()
 
     val genres: Flow<List<GenreSummary>> = audioTracks.map { tracks ->
         tracks.filter { it.genre.isNotBlank() }
@@ -127,6 +169,8 @@ class MediaRepository(
             }
             .sortedBy { it.name.lowercase() }
     }
+        .flowOn(Dispatchers.Default)
+        .distinctUntilChanged()
 
     fun searchLocal(queryFlow: Flow<String>, filterFlow: Flow<SearchFilter>): Flow<SearchResultsBundle> {
         return combine(allMedia, albums, artists, playlists, queryFlow, filterFlow) { values ->
@@ -195,6 +239,8 @@ class MediaRepository(
                 playlists = matchedPlaylists
             )
         }
+            .flowOn(Dispatchers.Default)
+            .distinctUntilChanged()
     }
 
     suspend fun importUris(
@@ -543,9 +589,114 @@ class MediaRepository(
 
     suspend fun deleteHistoryEntry(historyId: Long) = historyDao.deleteEntry(historyId)
 
-    suspend fun clearHistory() = historyDao.clearAll()
+    suspend fun clearHistory() {
+        historyDao.clearAll()
+        listeningSessionDao?.clearAll()
+    }
 
-    suspend fun resetStats() = mediaDao.resetStats()
+    suspend fun resetStats() {
+        mediaDao.resetStats()
+        listeningSessionDao?.clearAll()
+    }
+
+    suspend fun recordListeningSession(
+        mediaId: Long,
+        startedAt: Long,
+        durationListenedMs: Long,
+        trackDurationMs: Long,
+        wasSkippedEarly: Boolean,
+        outputRoute: String = "Speaker",
+        pauseHistory: Boolean = false
+    ) {
+        if (pauseHistory || mediaId <= 0L || durationListenedMs < 1500L) return
+        val completed = trackDurationMs > 0L && durationListenedMs >= (trackDurationMs * 0.70f).toLong()
+        listeningSessionDao?.insert(
+            ListeningSessionEntity(
+                mediaId = mediaId,
+                startedAt = startedAt,
+                durationListenedMs = durationListenedMs,
+                completedTrack = completed,
+                skippedEarly = wasSkippedEarly && !completed,
+                outputRoute = outputRoute.ifBlank { "SPEAKER" }
+            )
+        )
+    }
+
+    suspend fun createCollection(
+        name: String,
+        description: String = "",
+        accentTag: String = "luma",
+        initialTrackIds: List<Long> = emptyList()
+    ): Long {
+        val dao = customCollectionDao ?: return -1L
+        val now = System.currentTimeMillis()
+        val id = dao.insertCollection(
+            CustomCollectionEntity(
+                name = name.trim().ifBlank { "Nova Coleção" },
+                description = description.trim(),
+                accentTag = accentTag.ifBlank { "luma" },
+                createdAt = now,
+                updatedAt = now
+            )
+        )
+        initialTrackIds.distinct().forEachIndexed { index, mediaId ->
+            dao.insertTrackRef(CollectionTrackCrossRef(collectionId = id, mediaId = mediaId, position = index))
+        }
+        return id
+    }
+
+    suspend fun updateCollectionMeta(
+        collectionId: Long,
+        name: String,
+        description: String,
+        accentTag: String
+    ) {
+        customCollectionDao?.updateCollectionMeta(
+            id = collectionId,
+            name = name.trim().ifBlank { "Coleção" },
+            description = description.trim(),
+            accentTag = accentTag.ifBlank { "luma" },
+            updatedAt = System.currentTimeMillis()
+        )
+    }
+
+    suspend fun toggleCollectionPinned(collectionId: Long, pinned: Boolean) {
+        customCollectionDao?.setPinned(collectionId, pinned, System.currentTimeMillis())
+    }
+
+    suspend fun deleteCollection(collectionId: Long) {
+        customCollectionDao?.deleteCollection(collectionId)
+    }
+
+    suspend fun addTrackToCollection(collectionId: Long, mediaId: Long) {
+        val dao = customCollectionDao ?: return
+        val existing = dao.getTrackRefs(collectionId)
+        if (existing.any { it.mediaId == mediaId }) return
+        val nextPos = (existing.maxOfOrNull { it.position } ?: -1) + 1
+        dao.insertTrackRef(CollectionTrackCrossRef(collectionId = collectionId, mediaId = mediaId, position = nextPos))
+        dao.touchCollection(collectionId, System.currentTimeMillis())
+    }
+
+    suspend fun addTracksToCollection(collectionId: Long, mediaIds: List<Long>): Int {
+        val dao = customCollectionDao ?: return 0
+        val existing = dao.getTrackRefs(collectionId)
+        val existingIds = existing.map { it.mediaId }.toHashSet()
+        var nextPos = (existing.maxOfOrNull { it.position } ?: -1) + 1
+        val newRefs = mediaIds.distinct()
+            .filter { it !in existingIds }
+            .map { id -> CollectionTrackCrossRef(collectionId = collectionId, mediaId = id, position = nextPos++) }
+        if (newRefs.isNotEmpty()) {
+            dao.insertTrackRefs(newRefs)
+            dao.touchCollection(collectionId, System.currentTimeMillis())
+        }
+        return newRefs.size
+    }
+
+    suspend fun removeTrackFromCollection(collectionId: Long, mediaId: Long) {
+        val dao = customCollectionDao ?: return
+        dao.removeTrackFromCollection(collectionId, mediaId)
+        dao.touchCollection(collectionId, System.currentTimeMillis())
+    }
 
     suspend fun saveQueue(mediaIds: List<Long>) = queueDao.replaceQueue(mediaIds)
 

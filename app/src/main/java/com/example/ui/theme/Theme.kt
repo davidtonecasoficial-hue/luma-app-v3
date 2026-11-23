@@ -8,15 +8,18 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
@@ -34,6 +37,7 @@ import com.example.data.model.PlaybackAnimationStyle
 import com.example.data.model.SurfaceMaterial
 import com.example.data.model.ThemeMode
 
+@Immutable
 data class LumaGlassTokens(
     val isDark: Boolean,
     val themeStyle: AppThemeStyle,
@@ -159,43 +163,50 @@ fun LumaTheme(
     }
 
     val context = LocalContext.current
-    val systemAnimScale = runCatching {
-        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
-    }.getOrDefault(1f)
+    val systemAnimScale = remember(context) {
+        runCatching {
+            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+        }.getOrDefault(1f)
+    }
     val effectiveReduceMotion = settings.reduceMotion || systemAnimScale == 0f
 
     val style = settings.themeStyle
     val material = style.material
     val isMonochrome = material == SurfaceMaterial.NEUMORPHIC_BW
-
-    val baseSpec = resolveThemeSpec(style = style, isDark = isDark, quality = settings.glassQuality)
-    val customAccentColor = if (settings.customAccentHex != 0L && !isMonochrome) {
-        Color(settings.customAccentHex)
-    } else null
     val transparencyScale = settings.glassTransparencyScale.coerceIn(0.45f, 1.45f)
 
-    val effectivePrimary = customAccentColor ?: baseSpec.accentPrimary
-    val effectiveSecondary = customAccentColor?.let { lerp(it, if (isDark) Color.White else Color.Black, 0.22f) }
-        ?: baseSpec.accentSecondary
-    val spec = baseSpec.copy(
-        accentPrimary = effectivePrimary,
-        accentSecondary = effectiveSecondary,
-        glassSurface = baseSpec.glassSurface.copy(
-            alpha = (baseSpec.glassSurface.alpha * transparencyScale).coerceIn(0.25f, 0.98f)
-        ),
-        glassElevated = baseSpec.glassElevated.copy(
-            alpha = (baseSpec.glassElevated.alpha * transparencyScale).coerceIn(0.32f, 0.99f)
-        ),
-        pillBg = effectivePrimary.copy(alpha = if (isDark) 0.22f else 0.14f)
-    )
-    val rawOnAccent = when {
-        isMonochrome -> if (spec.accentPrimary.luminance() > 0.46f) NeuBwInkBlack else Color.White
-        spec.accentPrimary.luminance() > 0.46f -> DeepNavyBg
-        else -> Color.White
+    val spec = remember(style, isDark, settings.glassQuality, settings.customAccentHex, isMonochrome, transparencyScale) {
+        val baseSpec = resolveThemeSpec(style = style, isDark = isDark, quality = settings.glassQuality)
+        val customAccentColor = if (settings.customAccentHex != 0L && !isMonochrome) {
+            Color(settings.customAccentHex)
+        } else null
+        val effectivePrimary = customAccentColor ?: baseSpec.accentPrimary
+        val effectiveSecondary = customAccentColor?.let { lerp(it, if (isDark) Color.White else Color.Black, 0.22f) }
+            ?: baseSpec.accentSecondary
+        baseSpec.copy(
+            accentPrimary = effectivePrimary,
+            accentSecondary = effectiveSecondary,
+            glassSurface = baseSpec.glassSurface.copy(
+                alpha = (baseSpec.glassSurface.alpha * transparencyScale).coerceIn(0.25f, 0.98f)
+            ),
+            glassElevated = baseSpec.glassElevated.copy(
+                alpha = (baseSpec.glassElevated.alpha * transparencyScale).coerceIn(0.32f, 0.99f)
+            ),
+            pillBg = effectivePrimary.copy(alpha = if (isDark) 0.22f else 0.14f)
+        )
+    }
+    val rawOnAccent = remember(spec.accentPrimary, isMonochrome) {
+        when {
+            isMonochrome -> if (spec.accentPrimary.luminance() > 0.46f) NeuBwInkBlack else Color.White
+            spec.accentPrimary.luminance() > 0.46f -> DeepNavyBg
+            else -> Color.White
+        }
     }
 
     val animDuration = if (effectiveReduceMotion) 0 else 260
-    val colorSpec = tween<Color>(durationMillis = animDuration, easing = FastOutSlowInEasing)
+    val colorSpec = remember(animDuration) {
+        tween<Color>(durationMillis = animDuration, easing = FastOutSlowInEasing)
+    }
 
     val primary by animateColorAsState(spec.accentPrimary, colorSpec, label = "primary")
     val secondary by animateColorAsState(spec.accentSecondary, colorSpec, label = "secondary")
@@ -240,103 +251,120 @@ fun LumaTheme(
     val glassBorderBottom by animateColorAsState(spec.borderBottom, colorSpec, label = "glassBorderBottom")
     val pillBg by animateColorAsState(spec.pillBg, colorSpec, label = "pillBg")
 
-    val colorScheme = if (isDark) {
-        darkColorScheme(
-            primary = primary,
-            onPrimary = onAccent,
-            primaryContainer = primary.copy(alpha = 0.20f),
-            onPrimaryContainer = textPrimary,
-            secondary = secondary,
-            onSecondary = if (secondary.luminance() > 0.46f) DeepNavyBg else Color.White,
-            secondaryContainer = secondary.copy(alpha = 0.20f),
-            onSecondaryContainer = textPrimary,
-            background = bg,
-            onBackground = textPrimary,
-            surface = surface,
-            onSurface = textPrimary,
-            surfaceVariant = surfaceVariant,
-            onSurfaceVariant = textSecondary,
-            surfaceContainerLowest = bg,
-            surfaceContainerLow = bgSecondary,
-            surfaceContainer = surface,
-            surfaceContainerHigh = surfaceElevated,
-            surfaceContainerHighest = surfaceVariant,
-            error = errorColor,
-            onError = DeepNavyBg,
-            outline = dividerColor,
-            outlineVariant = glassBorderBottom
-        )
-    } else {
-        lightColorScheme(
-            primary = primary,
-            onPrimary = onAccent,
-            primaryContainer = primary.copy(alpha = 0.14f),
-            onPrimaryContainer = textPrimary,
-            secondary = secondary,
-            onSecondary = if (secondary.luminance() > 0.46f) NeuBwInkBlack else Color.White,
-            secondaryContainer = secondary.copy(alpha = 0.14f),
-            onSecondaryContainer = textPrimary,
-            background = bg,
-            onBackground = textPrimary,
-            surface = surface,
-            onSurface = textPrimary,
-            surfaceVariant = surfaceVariant,
-            onSurfaceVariant = textSecondary,
-            surfaceContainerLowest = Color.White,
-            surfaceContainerLow = bgSecondary,
-            surfaceContainer = surface,
-            surfaceContainerHigh = surfaceElevated,
-            surfaceContainerHighest = surfaceVariant,
-            error = errorColor,
-            onError = Color.White,
-            outline = dividerColor,
-            outlineVariant = glassBorderBottom
-        )
+    val colorScheme = remember(
+        isDark, primary, onAccent, textPrimary, secondary, bg, bgSecondary,
+        surface, surfaceVariant, surfaceElevated, textSecondary, errorColor,
+        dividerColor, glassBorderBottom
+    ) {
+        if (isDark) {
+            darkColorScheme(
+                primary = primary,
+                onPrimary = onAccent,
+                primaryContainer = primary.copy(alpha = 0.20f),
+                onPrimaryContainer = textPrimary,
+                secondary = secondary,
+                onSecondary = if (secondary.luminance() > 0.46f) DeepNavyBg else Color.White,
+                secondaryContainer = secondary.copy(alpha = 0.20f),
+                onSecondaryContainer = textPrimary,
+                background = bg,
+                onBackground = textPrimary,
+                surface = surface,
+                onSurface = textPrimary,
+                surfaceVariant = surfaceVariant,
+                onSurfaceVariant = textSecondary,
+                surfaceContainerLowest = bg,
+                surfaceContainerLow = bgSecondary,
+                surfaceContainer = surface,
+                surfaceContainerHigh = surfaceElevated,
+                surfaceContainerHighest = surfaceVariant,
+                error = errorColor,
+                onError = DeepNavyBg,
+                outline = dividerColor,
+                outlineVariant = glassBorderBottom
+            )
+        } else {
+            lightColorScheme(
+                primary = primary,
+                onPrimary = onAccent,
+                primaryContainer = primary.copy(alpha = 0.14f),
+                onPrimaryContainer = textPrimary,
+                secondary = secondary,
+                onSecondary = if (secondary.luminance() > 0.46f) NeuBwInkBlack else Color.White,
+                secondaryContainer = secondary.copy(alpha = 0.14f),
+                onSecondaryContainer = textPrimary,
+                background = bg,
+                onBackground = textPrimary,
+                surface = surface,
+                onSurface = textPrimary,
+                surfaceVariant = surfaceVariant,
+                onSurfaceVariant = textSecondary,
+                surfaceContainerLowest = Color.White,
+                surfaceContainerLow = bgSecondary,
+                surfaceContainer = surface,
+                surfaceContainerHigh = surfaceElevated,
+                surfaceContainerHighest = surfaceVariant,
+                error = errorColor,
+                onError = Color.White,
+                outline = dividerColor,
+                outlineVariant = glassBorderBottom
+            )
+        }
     }
 
     val effectiveHaptics = settings.hapticsEnabled && settings.hapticIntensity != HapticIntensity.OFF
-    val glassTokens = LumaGlassTokens(
-        isDark = isDark,
-        themeStyle = style,
-        surfaceMaterial = material,
-        isMonochrome = isMonochrome,
-        glassQuality = settings.glassQuality,
-        reduceMotion = effectiveReduceMotion,
-        hapticsEnabled = effectiveHaptics,
-        hapticIntensity = settings.hapticIntensity,
-        glassTransparencyScale = transparencyScale,
-        backgroundBlurScale = settings.backgroundBlurScale.coerceIn(0.4f, 1.5f),
-        artworkShape = settings.artworkShape,
-        playbackAnimationStyle = settings.playbackAnimationStyle,
-        background = bg,
-        backgroundSecondary = bgSecondary,
-        surface = surface,
-        surfaceElevated = surfaceElevated,
-        glassSurface = glassSurface,
-        glassElevated = glassElevated,
-        glassBorder = glassBorder,
-        glassBorderTop = glassBorderTop,
-        glassBorderBottom = glassBorderBottom,
-        reliefShadowLight = reliefLight,
-        reliefShadowDark = reliefDark,
-        textPrimary = textPrimary,
-        textSecondary = textSecondary,
-        textDisabled = textDisabled,
-        accentPrimary = primary,
-        accentSecondary = secondary,
-        onAccent = onAccent,
-        iconPrimary = primary,
-        divider = dividerColor,
-        success = successColor,
-        warning = warningColor,
-        error = errorColor,
-        pillIndicatorBg = pillBg,
-        scrim = if (isDark) Color(0xA6040A14) else textPrimary.copy(alpha = 0.34f)
-    )
+    val blurScale = settings.backgroundBlurScale.coerceIn(0.4f, 1.5f)
+    val glassTokens = remember(
+        isDark, style, material, isMonochrome, settings.glassQuality, effectiveReduceMotion,
+        effectiveHaptics, settings.hapticIntensity, transparencyScale, blurScale,
+        settings.artworkShape, settings.playbackAnimationStyle,
+        bg, bgSecondary, surface, surfaceElevated, glassSurface, glassElevated,
+        glassBorder, glassBorderTop, glassBorderBottom, reliefLight, reliefDark,
+        textPrimary, textSecondary, textDisabled, primary, secondary, onAccent,
+        dividerColor, successColor, warningColor, errorColor, pillBg
+    ) {
+        LumaGlassTokens(
+            isDark = isDark,
+            themeStyle = style,
+            surfaceMaterial = material,
+            isMonochrome = isMonochrome,
+            glassQuality = settings.glassQuality,
+            reduceMotion = effectiveReduceMotion,
+            hapticsEnabled = effectiveHaptics,
+            hapticIntensity = settings.hapticIntensity,
+            glassTransparencyScale = transparencyScale,
+            backgroundBlurScale = blurScale,
+            artworkShape = settings.artworkShape,
+            playbackAnimationStyle = settings.playbackAnimationStyle,
+            background = bg,
+            backgroundSecondary = bgSecondary,
+            surface = surface,
+            surfaceElevated = surfaceElevated,
+            glassSurface = glassSurface,
+            glassElevated = glassElevated,
+            glassBorder = glassBorder,
+            glassBorderTop = glassBorderTop,
+            glassBorderBottom = glassBorderBottom,
+            reliefShadowLight = reliefLight,
+            reliefShadowDark = reliefDark,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            textDisabled = textDisabled,
+            accentPrimary = primary,
+            accentSecondary = secondary,
+            onAccent = onAccent,
+            iconPrimary = primary,
+            divider = dividerColor,
+            success = successColor,
+            warning = warningColor,
+            error = errorColor,
+            pillIndicatorBg = pillBg,
+            scrim = if (isDark) Color(0xA6040A14) else textPrimary.copy(alpha = 0.34f)
+        )
+    }
 
     val view = LocalView.current
     if (!view.isInEditMode) {
-        SideEffect {
+        LaunchedEffect(view, bg, isDark) {
             val window = (view.context as? Activity)?.window
             if (window != null) {
                 window.decorView.setBackgroundColor(bg.toArgb())
@@ -643,3 +671,132 @@ private data class GlassColors(
     val primary: Color,
     val secondary: Color
 )
+
+fun buildColorSchemeFromGlass(
+    glass: LumaGlassTokens,
+    baseScheme: ColorScheme
+): ColorScheme {
+    return baseScheme.copy(
+        primary = glass.accentPrimary,
+        onPrimary = glass.onAccent,
+        primaryContainer = glass.pillIndicatorBg,
+        onPrimaryContainer = glass.textPrimary,
+        secondary = glass.accentSecondary,
+        onSecondary = if (glass.accentSecondary.luminance() > 0.46f) DeepNavyBg else Color.White,
+        secondaryContainer = glass.accentSecondary.copy(alpha = if (glass.isDark) 0.22f else 0.14f),
+        onSecondaryContainer = glass.textPrimary,
+        background = glass.background,
+        onBackground = glass.textPrimary,
+        surface = glass.surface,
+        onSurface = glass.textPrimary,
+        surfaceVariant = glass.surfaceElevated,
+        onSurfaceVariant = glass.textSecondary,
+        surfaceContainerLowest = glass.background,
+        surfaceContainerLow = glass.backgroundSecondary,
+        surfaceContainer = glass.surface,
+        surfaceContainerHigh = glass.surfaceElevated,
+        surfaceContainerHighest = glass.surfaceElevated,
+        outline = glass.glassBorder,
+        outlineVariant = glass.glassBorderBottom
+    )
+}
+
+/**
+ * Pure helper computing an artwork-harmonized set of LumaGlassTokens while preserving contrast
+ * in both Light and Dark modes so the entire Now Playing Display coincides with the music cover.
+ */
+fun buildHarmonizedNpdTokens(
+    base: LumaGlassTokens,
+    extracted: ExtractedArtworkColors?
+): LumaGlassTokens {
+    if (extracted == null || base.isMonochrome) return base
+
+    val rawPrimary = extracted.primary
+    val rawSecondary = extracted.secondary
+    val tunedPrimary = if (base.isDark) {
+        if (rawPrimary.luminance() < 0.28f) lerp(rawPrimary, Color.White, 0.44f) else rawPrimary
+    } else {
+        if (rawPrimary.luminance() > 0.56f) lerp(rawPrimary, Color(0xFF141824), 0.42f) else rawPrimary
+    }
+    val tunedSecondary = if (base.isDark) {
+        if (rawSecondary.luminance() < 0.24f) lerp(rawSecondary, Color.White, 0.40f) else rawSecondary
+    } else {
+        if (rawSecondary.luminance() > 0.56f) lerp(rawSecondary, Color(0xFF1A2030), 0.38f) else rawSecondary
+    }
+
+    val backdropAnchor1 = if (base.isDark) lerp(rawPrimary, Color(0xFF090D16), 0.54f) else lerp(rawPrimary, Color.White, 0.72f)
+    val backdropAnchor2 = if (base.isDark) lerp(rawSecondary, Color(0xFF060910), 0.58f) else lerp(rawSecondary, Color.White, 0.76f)
+    val bgTint = if (base.isDark) 0.56f else 0.44f
+    val surfTint = if (base.isDark) 0.40f else 0.28f
+    val subTextTint = if (base.isDark) 0.22f else 0.16f
+
+    return base.copy(
+        background = lerp(base.background, backdropAnchor1, bgTint),
+        backgroundSecondary = lerp(base.backgroundSecondary, backdropAnchor2, (bgTint + 0.08f).coerceAtMost(0.75f)),
+        surface = lerp(base.surface, backdropAnchor1, surfTint),
+        surfaceElevated = lerp(base.surfaceElevated, backdropAnchor2, surfTint),
+        glassSurface = lerp(base.glassSurface, backdropAnchor1, surfTint).copy(alpha = base.glassSurface.alpha),
+        glassElevated = lerp(base.glassElevated, backdropAnchor2, surfTint).copy(alpha = base.glassElevated.alpha),
+        glassBorder = lerp(base.glassBorder, tunedPrimary, 0.42f),
+        glassBorderTop = if (base.isDark) lerp(base.glassBorderTop, tunedPrimary, 0.34f) else Color.White.copy(alpha = 0.92f),
+        textSecondary = lerp(base.textSecondary, tunedPrimary, subTextTint),
+        accentPrimary = tunedPrimary,
+        accentSecondary = tunedSecondary,
+        onAccent = if (tunedPrimary.luminance() > 0.46f) DeepNavyBg else Color.White,
+        iconPrimary = tunedPrimary,
+        pillIndicatorBg = tunedPrimary.copy(alpha = if (base.isDark) 0.28f else 0.18f)
+    )
+}
+
+@Composable
+fun rememberHarmonizedNpdGlassTokens(
+    artworkPath: String?,
+    enabled: Boolean
+): LumaGlassTokens {
+    val base = LocalLumaGlass.current
+    val active = enabled && !base.isMonochrome
+    val extracted = rememberDynamicArtworkColors(
+        artworkPath = artworkPath,
+        enabled = active,
+        fallbackPrimary = base.accentPrimary,
+        fallbackSecondary = base.accentSecondary
+    )
+    val target = if (active && !artworkPath.isNullOrBlank()) {
+        buildHarmonizedNpdTokens(base, extracted)
+    } else {
+        base
+    }
+    val durationMs = if (base.reduceMotion) 0 else 360
+    val animSpec = tween<Color>(durationMillis = durationMs, easing = FastOutSlowInEasing)
+
+    val bg by animateColorAsState(target.background, animSpec, label = "npdBg")
+    val bgSec by animateColorAsState(target.backgroundSecondary, animSpec, label = "npdBgSec")
+    val surface by animateColorAsState(target.surface, animSpec, label = "npdSurf")
+    val surfaceElev by animateColorAsState(target.surfaceElevated, animSpec, label = "npdSurfElev")
+    val glassSurf by animateColorAsState(target.glassSurface, animSpec, label = "npdGlassSurf")
+    val glassElev by animateColorAsState(target.glassElevated, animSpec, label = "npdGlassElev")
+    val border by animateColorAsState(target.glassBorder, animSpec, label = "npdBorder")
+    val borderTop by animateColorAsState(target.glassBorderTop, animSpec, label = "npdBorderTop")
+    val textSec by animateColorAsState(target.textSecondary, animSpec, label = "npdTextSec")
+    val accent1 by animateColorAsState(target.accentPrimary, animSpec, label = "npdAccent1")
+    val accent2 by animateColorAsState(target.accentSecondary, animSpec, label = "npdAccent2")
+    val onAccent by animateColorAsState(target.onAccent, animSpec, label = "npdOnAccent")
+    val pillBg by animateColorAsState(target.pillIndicatorBg, animSpec, label = "npdPillBg")
+
+    return target.copy(
+        background = bg,
+        backgroundSecondary = bgSec,
+        surface = surface,
+        surfaceElevated = surfaceElev,
+        glassSurface = glassSurf,
+        glassElevated = glassElev,
+        glassBorder = border,
+        glassBorderTop = borderTop,
+        textSecondary = textSec,
+        accentPrimary = accent1,
+        accentSecondary = accent2,
+        onAccent = onAccent,
+        iconPrimary = accent1,
+        pillIndicatorBg = pillBg
+    )
+}

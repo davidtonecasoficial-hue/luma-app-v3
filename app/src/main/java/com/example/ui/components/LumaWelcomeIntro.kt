@@ -168,16 +168,19 @@ fun AnimatedLumaMonogramLogo(
     ) {
         // Soft breathing pink & white halo behind the pure white Soft-UI medallion
         Canvas(modifier = Modifier.fillMaxSize()) {
+            if (size.minDimension <= 1f) return@Canvas
             val haloAlpha = 0.14f + 0.10f * breath
+            val haloRadius = (size.minDimension * 0.62f).coerceAtLeast(1f)
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
                         SoftPinkPrimary.copy(alpha = haloAlpha),
                         SoftPinkSecondary.copy(alpha = haloAlpha * 0.45f),
                         Color.Transparent
-                    )
+                    ),
+                    radius = haloRadius
                 ),
-                radius = size.minDimension * 0.62f
+                radius = haloRadius
             )
         }
 
@@ -227,6 +230,7 @@ fun AnimatedLumaMonogramLogo(
                     .fillMaxSize(0.66f)
                     .testTag("animated_luma_pink_l")
             ) {
+                if (size.minDimension <= 1f) return@Canvas
                 val w = size.width
                 val h = size.height
 
@@ -399,6 +403,8 @@ fun LumaWelcomeIntroOverlay(
             .fillMaxSize()
             .background(Brush.verticalGradient(colors = bgGradient))
             .drawBehind {
+                if (size.minDimension <= 1f) return@drawBehind
+                val rTop = (size.maxDimension * 0.50f).coerceAtLeast(1f)
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
@@ -406,11 +412,12 @@ fun LumaWelcomeIntroOverlay(
                             Color.Transparent
                         ),
                         center = Offset(size.width * 0.5f, size.height * 0.22f),
-                        radius = size.maxDimension * 0.50f
+                        radius = rTop
                     ),
                     center = Offset(size.width * 0.5f, size.height * 0.22f),
-                    radius = size.maxDimension * 0.50f
+                    radius = rTop
                 )
+                val rBottom = (size.maxDimension * 0.44f).coerceAtLeast(1f)
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
@@ -418,10 +425,10 @@ fun LumaWelcomeIntroOverlay(
                             Color.Transparent
                         ),
                         center = Offset(size.width * 0.82f, size.height * 0.78f),
-                        radius = size.maxDimension * 0.44f
+                        radius = rBottom
                     ),
                     center = Offset(size.width * 0.82f, size.height * 0.78f),
-                    radius = size.maxDimension * 0.44f
+                    radius = rBottom
                 )
             }
             .testTag("welcome_intro_overlay")

@@ -113,9 +113,11 @@ fun VideoPlayerScreen(
     val pipState = LocalPipController.current
 
     val audioManager = remember {
-        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }
-    val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+    val maxVolume = remember {
+        audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC)?.coerceAtLeast(1) ?: 15
+    }
 
     var isPlaying by remember { mutableStateOf(true) }
     var positionMs by remember { mutableLongStateOf(video.lastPositionMs) }
@@ -136,20 +138,26 @@ fun VideoPlayerScreen(
         mutableFloatStateOf(activity?.window?.attributes?.screenBrightness?.takeIf { it >= 0f } ?: 0.6f)
     }
     var volumeFraction by remember {
-        mutableFloatStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVolume)
+        mutableFloatStateOf(
+            (audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC)?.toFloat() ?: 7f) / maxVolume
+        )
     }
 
     var currentTracks by remember { mutableStateOf(Tracks.EMPTY) }
 
     val exoPlayer = remember(video.id) {
         ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(Uri.parse(video.uri)))
-            val resumePos = if (video.lastPositionMs > 2000L &&
-                (video.durationMs <= 0L || video.lastPositionMs < video.durationMs - 3000L)
-            ) video.lastPositionMs else 0L
-            if (resumePos > 0L) seekTo(resumePos)
-            prepare()
-            playWhenReady = true
+            runCatching {
+                setMediaItem(MediaItem.fromUri(Uri.parse(video.uri)))
+                val resumePos = if (video.lastPositionMs > 2000L &&
+                    (video.durationMs <= 0L || video.lastPositionMs < video.durationMs - 3000L)
+                ) video.lastPositionMs else 0L
+                if (resumePos > 0L) seekTo(resumePos)
+                prepare()
+                playWhenReady = true
+            }.onFailure {
+                errorMessage = "Não foi possível abrir este vídeo no dispositivo."
+            }
         }
     }
 
@@ -157,34 +165,41 @@ fun VideoPlayerScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { subUri ->
         if (subUri != null) {
-            val fileName = queryDisplayName(context, subUri)
-            val mime = if (fileName.endsWith(".vtt", ignoreCase = true)) {
-                MimeTypes.TEXT_VTT
-            } else {
-                MimeTypes.APPLICATION_SUBRIP
+            runCatching {
+                val fileName = queryDisplayName(context, subUri)
+                val mime = if (fileName.endsWith(".vtt", ignoreCase = true)) {
+                    MimeTypes.TEXT_VTT
+                } else {
+                    MimeTypes.APPLICATION_SUBRIP
+                }
+                val subConfig = MediaItem.SubtitleConfiguration.Builder(subUri)
+                    .setMimeType(mime)
+                    .setLanguage("pt")
+                    .setLabel(fileName)
+                    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                    .build()
+                val resumeAt = exoPlayer.currentPosition.coerceAtLeast(0L)
+                val keepPlaying = exoPlayer.playWhenReady
+                val updatedItem = MediaItem.Builder()
+                    .setUri(Uri.parse(video.uri))
+                    .setSubtitleConfigurations(listOf(subConfig))
+                    .build()
+                exoPlayer.setMediaItem(updatedItem, resumeAt)
+                exoPlayer.prepare()
+                exoPlayer.playWhenReady = keepPlaying
+                externalSubtitleLabel = fileName
+            }.onFailure {
+                errorMessage = "Não foi possível carregar este ficheiro de legendas."
             }
-            val subConfig = MediaItem.SubtitleConfiguration.Builder(subUri)
-                .setMimeType(mime)
-                .setLanguage("pt")
-                .setLabel(fileName)
-                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                .build()
-            val resumeAt = exoPlayer.currentPosition.coerceAtLeast(0L)
-            val keepPlaying = exoPlayer.playWhenReady
-            val updatedItem = MediaItem.Builder()
-                .setUri(Uri.parse(video.uri))
-                .setSubtitleConfigurations(listOf(subConfig))
-                .build()
-            exoPlayer.setMediaItem(updatedItem, resumeAt)
-            exoPlayer.prepare()
-            exoPlayer.playWhenReady = keepPlaying
-            externalSubtitleLabel = fileName
         }
     }
 
     val exitAction = {
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        onClose(exoPlayer.currentPosition.coerceAtLeast(0L))
+        runCatching {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+        val finalPos = runCatching { exoPlayer.currentPosition.coerceAtLeast(0L) }.getOrDefault(positionMs)
+        onClose(finalPos)
     }
 
     BackHandler { exitAction() }
@@ -213,17 +228,19 @@ fun VideoPlayerScreen(
         }
         exoPlayer.addListener(listener)
         onDispose {
-            exoPlayer.removeListener(listener)
-            exoPlayer.release()
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            runCatching { exoPlayer.removeListener(listener) }
+            runCatching { exoPlayer.release() }
+            runCatching { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
         }
     }
 
     LaunchedEffect(exoPlayer) {
         while (true) {
-            positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-            val d = exoPlayer.duration
-            if (d > 0L) durationMs = d
+            runCatching {
+                positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+                val d = exoPlayer.duration
+                if (d > 0L) durationMs = d
+            }
             delay(350L)
         }
     }
@@ -244,21 +261,25 @@ fun VideoPlayerScreen(
     val applyBrightness: (Float) -> Unit = { newVal ->
         val clamped = newVal.coerceIn(0.05f, 1f)
         brightness = clamped
-        activity?.window?.let { win ->
-            val lp = win.attributes
-            lp.screenBrightness = clamped
-            win.attributes = lp
+        runCatching {
+            activity?.window?.let { win ->
+                val lp = win.attributes
+                lp.screenBrightness = clamped
+                win.attributes = lp
+            }
         }
     }
 
     val applyVolume: (Float) -> Unit = { newVal ->
         val clamped = newVal.coerceIn(0f, 1f)
         volumeFraction = clamped
-        audioManager.setStreamVolume(
-            AudioManager.STREAM_MUSIC,
-            (clamped * maxVolume).toInt().coerceIn(0, maxVolume),
-            0
-        )
+        runCatching {
+            audioManager?.setStreamVolume(
+                AudioManager.STREAM_MUSIC,
+                (clamped * maxVolume).toInt().coerceIn(0, maxVolume),
+                0
+            )
+        }
     }
 
     Box(
@@ -308,7 +329,7 @@ fun VideoPlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        if (errorMessage != null) {
+        errorMessage?.let { activeErrMsg ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -321,7 +342,7 @@ fun VideoPlayerScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = errorMessage!!,
+                            text = activeErrMsg,
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -334,7 +355,8 @@ fun VideoPlayerScreen(
         }
 
         // Brightness / Volume Swipe Gesture HUD
-        if (gestureHudLabel != null && !pipState.isInPipMode) {
+        val hudText = gestureHudLabel
+        if (hudText != null && !pipState.isInPipMode) {
             LiquidGlassSurface(
                 shape = RoundedCornerShape(20.dp),
                 elevated = true,
@@ -354,7 +376,7 @@ fun VideoPlayerScreen(
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = gestureHudLabel!!,
+                        text = hudText,
                         style = MaterialTheme.typography.titleSmall,
                         color = Color.White
                     )
@@ -475,7 +497,11 @@ fun VideoPlayerScreen(
                                         colors = videoMenuColors,
                                         onClick = {
                                             trackMenuOpen = false
-                                            subtitleLauncher.launch(AppConfig.SAF_SUBTITLE_MIME_TYPES)
+                                            runCatching {
+                                                subtitleLauncher.launch(AppConfig.SAF_SUBTITLE_MIME_TYPES)
+                                            }.onFailure {
+                                                errorMessage = "Nenhum seletor de ficheiros disponível neste dispositivo."
+                                            }
                                         }
                                     )
                                     val subtitleGroups = currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }

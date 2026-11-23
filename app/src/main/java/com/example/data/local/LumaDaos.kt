@@ -6,7 +6,11 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import com.example.data.model.CollectionTrackCrossRef
+import com.example.data.model.CustomCollectionEntity
+import com.example.data.model.CustomCollectionWithTracks
 import com.example.data.model.HistoryWithMedia
+import com.example.data.model.ListeningSessionEntity
 import com.example.data.model.MediaItemEntity
 import com.example.data.model.MediaType
 import com.example.data.model.PlaybackHistoryEntity
@@ -170,4 +174,62 @@ interface QueueDao {
         clear()
         insertAll(mediaIds.mapIndexed { index, id -> QueueItemEntity(queuePosition = index, mediaId = id) })
     }
+}
+
+@Dao
+interface CustomCollectionDao {
+    @Transaction
+    @Query("SELECT * FROM custom_collections ORDER BY isPinned DESC, updatedAt DESC")
+    fun observeCollectionsWithTracks(): Flow<List<CustomCollectionWithTracks>>
+
+    @Query("SELECT * FROM collection_tracks ORDER BY position ASC")
+    fun observeAllTrackRefs(): Flow<List<CollectionTrackCrossRef>>
+
+    @Query("SELECT * FROM collection_tracks WHERE collectionId = :collectionId ORDER BY position ASC")
+    suspend fun getTrackRefs(collectionId: Long): List<CollectionTrackCrossRef>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCollection(collection: CustomCollectionEntity): Long
+
+    @Query("UPDATE custom_collections SET name = :name, description = :description, accentTag = :accentTag, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateCollectionMeta(
+        id: Long,
+        name: String,
+        description: String,
+        accentTag: String,
+        updatedAt: Long
+    )
+
+    @Query("UPDATE custom_collections SET isPinned = :pinned, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun setPinned(id: Long, pinned: Boolean, updatedAt: Long)
+
+    @Query("UPDATE custom_collections SET updatedAt = :updatedAt WHERE id = :id")
+    suspend fun touchCollection(id: Long, updatedAt: Long)
+
+    @Query("DELETE FROM custom_collections WHERE id = :id")
+    suspend fun deleteCollection(id: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTrackRef(ref: CollectionTrackCrossRef)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTrackRefs(refs: List<CollectionTrackCrossRef>)
+
+    @Query("DELETE FROM collection_tracks WHERE collectionId = :collectionId AND mediaId = :mediaId")
+    suspend fun removeTrackFromCollection(collectionId: Long, mediaId: Long)
+}
+
+@Dao
+interface ListeningSessionDao {
+    @Query("SELECT * FROM listening_sessions ORDER BY startedAt DESC LIMIT 3000")
+    fun observeRecentSessions(): Flow<List<ListeningSessionEntity>>
+
+    @Query("SELECT * FROM listening_sessions ORDER BY startedAt DESC LIMIT 3000")
+    suspend fun getRecentSessionsOnce(): List<ListeningSessionEntity>
+
+    @Insert
+    suspend fun insert(session: ListeningSessionEntity): Long
+
+    @Query("DELETE FROM listening_sessions")
+    suspend fun clearAll()
 }

@@ -62,12 +62,14 @@ fun SpectrumVisualizerView(
 
     Box(modifier = modifier.testTag("spectrum_visualizer_${style.name.lowercase()}")) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val energy = if (isPlaying) max(snapshot.peakEnergy, 0.22f) else 0.08f
+            if (size.width <= 1f || size.height <= 1f) return@Canvas
+            val rawEnergy = if (isPlaying) max(snapshot.peakEnergy, 0.22f) else 0.08f
+            val energy = if (rawEnergy.isFinite()) rawEnergy.coerceIn(0.05f, 1f) else 0.12f
             val bands = snapshot.bands
             val wave = snapshot.waveform
 
             if (reactiveLighting && isPlaying) {
-                val glowRadius = size.maxDimension * (0.42f + 0.25f * energy)
+                val glowRadius = (size.maxDimension * (0.42f + 0.25f * energy)).coerceAtLeast(1f)
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(

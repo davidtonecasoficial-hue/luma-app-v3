@@ -420,11 +420,13 @@ class MediaScanner(private val context: Context) {
         collectMediaAndLrcFromTree(treeUri).first
 
     suspend fun collectMediaAndLrcFromTree(treeUri: Uri): Pair<List<Uri>, Map<String, Uri>> = withContext(Dispatchers.IO) {
-        tryPersistPermission(treeUri)
         val collected = mutableListOf<Uri>()
         val lrcSidecars = mutableMapOf<String, Uri>()
-        val rootDocId = DocumentsContract.getTreeDocumentId(treeUri)
-        walkDocumentTree(treeUri, rootDocId, collected, lrcSidecars, maxDepth = 4, currentDepth = 0)
+        runCatching {
+            tryPersistPermission(treeUri)
+            val rootDocId = DocumentsContract.getTreeDocumentId(treeUri)
+            walkDocumentTree(treeUri, rootDocId, collected, lrcSidecars, maxDepth = 4, currentDepth = 0)
+        }
         collected to lrcSidecars
     }
 
@@ -459,9 +461,12 @@ class MediaScanner(private val context: Context) {
                         walkDocumentTree(treeUri, docId, output, lrcSidecars, maxDepth, currentDepth + 1)
                     } else {
                         val ext = name.substringAfterLast('.', "").lowercase()
-                        if (ext == "lrc") {
+                        if (ext == "lrc" || ext == "txt") {
                             val baseKey = name.substringBeforeLast('.', name).lowercase().trim()
-                            lrcSidecars[baseKey] = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+                            // Prefer .lrc over .txt if both exist
+                            if (ext == "lrc" || baseKey !in lrcSidecars) {
+                                lrcSidecars[baseKey] = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+                            }
                             continue
                         }
                         val isMedia = mime.startsWith("audio/") ||
@@ -551,11 +556,14 @@ class MediaScanner(private val context: Context) {
                     ?: retriever.frameAtTime
             }.getOrNull()
             if (frame != null) {
-                runCatching {
-                    FileOutputStream(outFile).use { stream ->
-                        frame.compress(Bitmap.CompressFormat.JPEG, 82, stream)
+                try {
+                    runCatching {
+                        FileOutputStream(outFile).use { stream ->
+                            frame.compress(Bitmap.CompressFormat.JPEG, 82, stream)
+                        }
                     }
-                    frame.recycle()
+                } finally {
+                    runCatching { if (!frame.isRecycled) frame.recycle() }
                 }
                 if (outFile.exists() && outFile.length() > 0L) return outFile.absolutePath
             }
@@ -577,10 +585,25 @@ class MediaScanner(private val context: Context) {
 
     suspend fun saveCustomArtworkFromUri(mediaId: Long, imageUri: Uri): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val bytes = context.contentResolver.openInputStream(imageUri)?.use { it.readBytes() }
-                ?: throw IllegalStateException("Não foi possível abrir a imagem selecionada.")
             val outFile = File(artworkDir, "custom_art_${mediaId}_${System.currentTimeMillis()}.jpg")
-            FileOutputStream(outFile).use { it.write(bytes) }
+            val sampled = com.example.config.LumaCrashGuard.decodeSampledBitmap(
+                context = context,
+                path = imageUri.toString(),
+                maxDimensionPx = 1024
+            )
+            if (sampled != null) {
+                try {
+                    FileOutputStream(outFile).use { stream ->
+                        sampled.compress(Bitmap.CompressFormat.JPEG, 90, stream)
+                    }
+                } finally {
+                    runCatching { if (!sampled.isRecycled) sampled.recycle() }
+                }
+            } else {
+                val bytes = context.contentResolver.openInputStream(imageUri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("Não foi possível abrir a imagem selecionada.")
+                FileOutputStream(outFile).use { it.write(bytes) }
+            }
             outFile.absolutePath
         }
     }

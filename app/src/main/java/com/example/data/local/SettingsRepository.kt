@@ -2,9 +2,11 @@ package com.example.data.local
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -12,6 +14,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.model.AccentPalette
+import com.example.data.model.AppLanguage
 import com.example.data.model.AppSettings
 import com.example.data.model.AppThemeStyle
 import com.example.data.model.ArtworkShape
@@ -24,15 +27,20 @@ import com.example.data.model.PlaybackAnimationStyle
 import com.example.data.model.PlayerScreenStyle
 import com.example.data.model.ReverbEffectPreset
 import com.example.data.model.ThemeMode
+import com.example.data.model.TrackBookmark
 import com.example.data.model.VisualizerPreset
 import com.example.data.model.VisualizerStyle
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
 
-private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "luma_settings")
+private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "luma_settings",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+)
 
 class SettingsRepository(private val context: Context) {
 
@@ -79,9 +87,19 @@ class SettingsRepository(private val context: Context) {
         val LAST_MEDIA_ID = longPreferencesKey("last_media_id")
         val LAST_POSITION_MS = longPreferencesKey("last_position_ms")
         val TOTAL_LISTENING_MS = longPreferencesKey("total_listening_ms")
+        val APP_LANGUAGE = stringPreferencesKey("app_language")
+        val PITCH_SEMITONES = floatPreferencesKey("pitch_semitones")
+        val SHAKE_TO_SKIP = booleanPreferencesKey("shake_to_skip")
+        val QUEUE_RADIO = booleanPreferencesKey("queue_radio")
+        val TRACK_BOOKMARKS = stringPreferencesKey("track_bookmarks")
+        val AUTO_PAUSE_DISCONNECT = booleanPreferencesKey("auto_pause_disconnect")
+        val AUTO_RESUME_BT = booleanPreferencesKey("auto_resume_bluetooth")
+        val HEADSET_DOUBLE_TAP = booleanPreferencesKey("headset_double_tap_skip")
     }
 
-    val settingsFlow: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
+    val settingsFlow: Flow<AppSettings> = context.settingsDataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { prefs ->
         val storedAccent = prefs[Keys.ACCENT_PALETTE]?.let { runCatching { AccentPalette.valueOf(it) }.getOrNull() }
         val legacyAccent = storedAccent ?: AccentPalette.EMERALD_MINT
         val resolvedStyle = prefs[Keys.THEME_STYLE]?.let { runCatching { AppThemeStyle.valueOf(it) }.getOrNull() }
@@ -106,12 +124,13 @@ class SettingsRepository(private val context: Context) {
             hapticsEnabled = prefs[Keys.HAPTICS_ENABLED] ?: true,
             hapticIntensity = prefs[Keys.HAPTIC_INTENSITY]?.let { runCatching { HapticIntensity.valueOf(it) }.getOrNull() }
                 ?: HapticIntensity.SUBTLE,
-            playbackSpeed = prefs[Keys.PLAYBACK_SPEED] ?: 1.0f,
+            playbackSpeed = (prefs[Keys.PLAYBACK_SPEED] ?: 1.0f).takeIf { it.isFinite() }?.coerceIn(0.5f, 2.0f) ?: 1.0f,
+            pitchSemitones = (prefs[Keys.PITCH_SEMITONES] ?: 0f).takeIf { it.isFinite() }?.coerceIn(-6f, 6f) ?: 0f,
             crossfadeEnabled = prefs[Keys.CROSSFADE_ENABLED] ?: false,
             crossfadeDurationSec = prefs[Keys.CROSSFADE_SEC] ?: 3,
             gaplessPlaybackEnabled = prefs[Keys.GAPLESS_PLAYBACK] ?: true,
             volumeNormalizationEnabled = prefs[Keys.VOLUME_NORMALIZATION] ?: false,
-            stereoBalance = (prefs[Keys.STEREO_BALANCE] ?: 0f).coerceIn(-1f, 1f),
+            stereoBalance = (prefs[Keys.STEREO_BALANCE] ?: 0f).takeIf { it.isFinite() }?.coerceIn(-1f, 1f) ?: 0f,
             reverbPreset = prefs[Keys.REVERB_PRESET]?.let { runCatching { ReverbEffectPreset.valueOf(it) }.getOrNull() }
                 ?: ReverbEffectPreset.NONE,
             virtualizerStrength = (prefs[Keys.VIRTUALIZER_STRENGTH] ?: 0).coerceIn(0, 1000),
@@ -125,6 +144,8 @@ class SettingsRepository(private val context: Context) {
             coverGesturesEnabled = prefs[Keys.COVER_GESTURES] ?: true,
             coverDoubleTapAction = prefs[Keys.COVER_DOUBLE_TAP]?.let { runCatching { CoverDoubleTapAction.valueOf(it) }.getOrNull() }
                 ?: CoverDoubleTapAction.PLAY_PAUSE,
+            shakeToSkipEnabled = prefs[Keys.SHAKE_TO_SKIP] ?: false,
+            queueRadioEnabled = prefs[Keys.QUEUE_RADIO] ?: false,
             minimalistPlayerMode = prefs[Keys.MINIMALIST_PLAYER] ?: false,
             albumArtAnimationEnabled = prefs[Keys.ALBUM_ART_ANIM] ?: true,
             playbackAnimationStyle = prefs[Keys.PLAYBACK_ANIM_STYLE]?.let { runCatching { PlaybackAnimationStyle.valueOf(it) }.getOrNull() }
@@ -132,20 +153,26 @@ class SettingsRepository(private val context: Context) {
             artworkShape = prefs[Keys.ARTWORK_SHAPE]?.let { runCatching { ArtworkShape.valueOf(it) }.getOrNull() }
                 ?: ArtworkShape.ROUNDED,
             customAccentHex = prefs[Keys.CUSTOM_ACCENT_HEX] ?: 0L,
-            glassTransparencyScale = (prefs[Keys.GLASS_TRANSPARENCY] ?: 1.0f).coerceIn(0.45f, 1.45f),
-            backgroundBlurScale = (prefs[Keys.BACKGROUND_BLUR] ?: 1.0f).coerceIn(0.4f, 1.5f),
+            glassTransparencyScale = (prefs[Keys.GLASS_TRANSPARENCY] ?: 1.0f).takeIf { it.isFinite() }?.coerceIn(0.45f, 1.45f) ?: 1.0f,
+            backgroundBlurScale = (prefs[Keys.BACKGROUND_BLUR] ?: 1.0f).takeIf { it.isFinite() }?.coerceIn(0.4f, 1.5f) ?: 1.0f,
             navBarShowLabels = prefs[Keys.NAV_BAR_LABELS] ?: false,
             homeSectionOrder = prefs[Keys.HOME_SECTION_ORDER] ?: HomeSectionType.DEFAULT_ORDER_STRING,
             hiddenHomeSections = prefs[Keys.HIDDEN_HOME_SECTIONS] ?: emptySet(),
             excludedFolders = prefs[Keys.EXCLUDED_FOLDERS] ?: emptySet(),
             pauseHistoryTracking = prefs[Keys.PAUSE_HISTORY] ?: false,
-            lyricsFontScale = (prefs[Keys.LYRICS_FONT_SCALE] ?: 1.0f).coerceIn(0.8f, 1.5f),
+            lyricsFontScale = (prefs[Keys.LYRICS_FONT_SCALE] ?: 1.0f).takeIf { it.isFinite() }?.coerceIn(0.8f, 1.5f) ?: 1.0f,
             lyricsCentered = prefs[Keys.LYRICS_CENTERED] ?: true,
             customAudioPresetsJson = prefs[Keys.CUSTOM_AUDIO_PRESETS] ?: "[]",
+            trackBookmarksJson = prefs[Keys.TRACK_BOOKMARKS] ?: "[]",
             hasSeenWelcomeIntro = prefs[Keys.WELCOME_INTRO_SEEN] ?: false,
             lastMediaId = prefs[Keys.LAST_MEDIA_ID] ?: -1L,
             lastPositionMs = prefs[Keys.LAST_POSITION_MS] ?: 0L,
-            totalListeningTimeMs = prefs[Keys.TOTAL_LISTENING_MS] ?: 0L
+            totalListeningTimeMs = prefs[Keys.TOTAL_LISTENING_MS] ?: 0L,
+            appLanguage = prefs[Keys.APP_LANGUAGE]?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() }
+                ?: AppLanguage.PT,
+            autoPauseOnDisconnect = prefs[Keys.AUTO_PAUSE_DISCONNECT] ?: true,
+            autoResumeOnBluetooth = prefs[Keys.AUTO_RESUME_BT] ?: false,
+            headsetButtonDoubleTapSkip = prefs[Keys.HEADSET_DOUBLE_TAP] ?: true
         )
     }
 
@@ -380,6 +407,63 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.LYRICS_FONT_SCALE] = s.lyricsFontScale
             prefs[Keys.LYRICS_CENTERED] = s.lyricsCentered
             prefs[Keys.CUSTOM_AUDIO_PRESETS] = s.customAudioPresetsJson
+            prefs[Keys.APP_LANGUAGE] = s.appLanguage.name
+            prefs[Keys.PITCH_SEMITONES] = s.pitchSemitones.coerceIn(-6f, 6f)
+            prefs[Keys.SHAKE_TO_SKIP] = s.shakeToSkipEnabled
+            prefs[Keys.QUEUE_RADIO] = s.queueRadioEnabled
+            prefs[Keys.AUTO_PAUSE_DISCONNECT] = s.autoPauseOnDisconnect
+            prefs[Keys.AUTO_RESUME_BT] = s.autoResumeOnBluetooth
+            prefs[Keys.HEADSET_DOUBLE_TAP] = s.headsetButtonDoubleTapSkip
+        }
+    }
+
+    suspend fun setAppLanguage(language: AppLanguage) {
+        context.settingsDataStore.edit { it[Keys.APP_LANGUAGE] = language.name }
+    }
+
+    suspend fun setPitchSemitones(semitones: Float) {
+        context.settingsDataStore.edit { it[Keys.PITCH_SEMITONES] = semitones.coerceIn(-6f, 6f) }
+    }
+
+    suspend fun setShakeToSkipEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.SHAKE_TO_SKIP] = enabled }
+    }
+
+    suspend fun setQueueRadioEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.QUEUE_RADIO] = enabled }
+    }
+
+    suspend fun setAutoPauseOnDisconnect(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.AUTO_PAUSE_DISCONNECT] = enabled }
+    }
+
+    suspend fun setAutoResumeOnBluetooth(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.AUTO_RESUME_BT] = enabled }
+    }
+
+    suspend fun setHeadsetButtonDoubleTapSkip(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.HEADSET_DOUBLE_TAP] = enabled }
+    }
+
+    suspend fun addTrackBookmark(mediaId: Long, positionMs: Long, label: String) {
+        context.settingsDataStore.edit { prefs ->
+            val list = decodeTrackBookmarks(prefs[Keys.TRACK_BOOKMARKS] ?: "[]").toMutableList()
+            val entry = TrackBookmark(
+                id = System.currentTimeMillis(),
+                mediaId = mediaId,
+                positionMs = positionMs.coerceAtLeast(0L),
+                label = label.trim().ifBlank { "Momento" }
+            )
+            list.add(0, entry)
+            prefs[Keys.TRACK_BOOKMARKS] = encodeTrackBookmarks(list.take(80))
+        }
+    }
+
+    suspend fun deleteTrackBookmark(bookmarkId: Long) {
+        context.settingsDataStore.edit { prefs ->
+            val updated = decodeTrackBookmarks(prefs[Keys.TRACK_BOOKMARKS] ?: "[]")
+                .filterNot { it.id == bookmarkId }
+            prefs[Keys.TRACK_BOOKMARKS] = encodeTrackBookmarks(updated)
         }
     }
 
@@ -446,6 +530,38 @@ class SettingsRepository(private val context: Context) {
                     put("balance", preset.stereoBalance.toDouble())
                 }
                 arr.put(obj)
+            }
+            return arr.toString()
+        }
+
+        fun decodeTrackBookmarks(json: String): List<TrackBookmark> = runCatching {
+            val arr = JSONArray(json)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    add(
+                        TrackBookmark(
+                            id = obj.optLong("id", i.toLong()),
+                            mediaId = obj.optLong("mediaId", -1L),
+                            positionMs = obj.optLong("posMs", 0L),
+                            label = obj.optString("label", "Momento")
+                        )
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+
+        fun encodeTrackBookmarks(bookmarks: List<TrackBookmark>): String {
+            val arr = JSONArray()
+            bookmarks.forEach { b ->
+                arr.put(
+                    JSONObject().apply {
+                        put("id", b.id)
+                        put("mediaId", b.mediaId)
+                        put("posMs", b.positionMs)
+                        put("label", b.label)
+                    }
+                )
             }
             return arr.toString()
         }

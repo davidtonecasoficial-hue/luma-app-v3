@@ -1,6 +1,7 @@
 package com.example.player
 
 import androidx.annotation.OptIn
+import androidx.compose.runtime.Immutable
 import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
@@ -16,6 +17,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+@Immutable
 data class AudioSpectrumSnapshot(
     val bands: List<Float> = List(16) { 0f },
     val waveform: List<Float> = List(32) { 0f },
@@ -33,10 +35,13 @@ object AudioPipelineBus {
     var spectrumEnabled: Boolean = true
 
     fun publishSpectrum(bands: List<Float>, waveform: List<Float>, peak: Float) {
+        val safeBands = bands.map { if (it.isFinite()) it.coerceIn(0f, 1f) else 0f }
+        val safeWave = waveform.map { if (it.isFinite()) it.coerceIn(-1f, 1f) else 0f }
+        val safePeak = if (peak.isFinite()) peak.coerceIn(0f, 1f) else 0f
         _spectrumSnapshot.value = AudioSpectrumSnapshot(
-            bands = bands,
-            waveform = waveform,
-            peakEnergy = peak.coerceIn(0f, 1f)
+            bands = safeBands,
+            waveform = safeWave,
+            peakEnergy = safePeak
         )
     }
 
@@ -62,7 +67,8 @@ class StereoBalanceAudioProcessor : BaseAudioProcessor() {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
 
-        val balance = AudioPipelineBus.stereoBalance.coerceIn(-1f, 1f)
+        val rawBalance = AudioPipelineBus.stereoBalance
+        val balance = if (rawBalance.isFinite()) rawBalance.coerceIn(-1f, 1f) else 0f
         val out = replaceOutputBuffer(remaining)
 
         if (abs(balance) < 0.01f || inputAudioFormat.channelCount != 2) {
@@ -75,17 +81,26 @@ class StereoBalanceAudioProcessor : BaseAudioProcessor() {
         val leftGain = if (balance > 0f) (1f - balance).coerceIn(0f, 1f) else 1f
         val rightGain = if (balance < 0f) (1f + balance).coerceIn(0f, 1f) else 1f
 
-        val readOrder = inputBuffer.order(ByteOrder.LITTLE_ENDIAN)
-        out.order(ByteOrder.LITTLE_ENDIAN)
+        runCatching {
+            val readOrder = inputBuffer.order(ByteOrder.LITTLE_ENDIAN)
+            out.order(ByteOrder.LITTLE_ENDIAN)
 
-        while (readOrder.remaining() >= 4) {
-            val l = (readOrder.short.toFloat() * leftGain).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
-            val r = (readOrder.short.toFloat() * rightGain).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
-            out.putShort(l.toShort())
-            out.putShort(r.toShort())
-        }
-        while (readOrder.hasRemaining()) {
-            out.put(readOrder.get())
+            while (readOrder.remaining() >= 4) {
+                val l = (readOrder.short.toFloat() * leftGain).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                val r = (readOrder.short.toFloat() * rightGain).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                out.putShort(l.toShort())
+                out.putShort(r.toShort())
+            }
+            while (readOrder.hasRemaining()) {
+                out.put(readOrder.get())
+            }
+        }.onFailure {
+            if (inputBuffer.hasRemaining()) {
+                runCatching {
+                    out.clear()
+                    out.put(inputBuffer)
+                }
+            }
         }
         out.flip()
     }
@@ -137,32 +152,35 @@ class SpectrumAudioProcessor : BaseAudioProcessor() {
 
         if (!AudioPipelineBus.spectrumEnabled || inputAudioFormat.channelCount <= 0) return
 
-        val channels = inputAudioFormat.channelCount
-        val bytesPerFrame = channels * 2
-        val totalFrames = remaining / bytesPerFrame
-        if (totalFrames <= 0) return
+        runCatching {
+            val channels = inputAudioFormat.channelCount
+            val bytesPerFrame = channels * 2
+            if (bytesPerFrame <= 0) return
+            val totalFrames = remaining / bytesPerFrame
+            if (totalFrames <= 0) return
 
-        val step = (totalFrames / 64).coerceAtLeast(1)
-        var i = 0
-        while (i < totalFrames) {
-            val byteOffset = i * bytesPerFrame
-            if (byteOffset + 1 < dup.limit()) {
-                val s0 = dup.getShort(dup.position() + byteOffset).toFloat() / 32768f
-                val mono = if (channels >= 2 && byteOffset + 3 < dup.limit()) {
-                    val s1 = dup.getShort(dup.position() + byteOffset + 2).toFloat() / 32768f
-                    (s0 + s1) * 0.5f
-                } else {
-                    s0
+            val step = (totalFrames / 64).coerceAtLeast(1)
+            var i = 0
+            while (i < totalFrames) {
+                val byteOffset = i * bytesPerFrame
+                if (byteOffset + 1 < dup.limit() && dup.position() + byteOffset + 1 < dup.limit()) {
+                    val s0 = dup.getShort(dup.position() + byteOffset).toFloat() / 32768f
+                    val mono = if (channels >= 2 && dup.position() + byteOffset + 3 < dup.limit()) {
+                        val s1 = dup.getShort(dup.position() + byteOffset + 2).toFloat() / 32768f
+                        (s0 + s1) * 0.5f
+                    } else {
+                        s0
+                    }
+                    monoRing[ringCursor] = if (mono.isFinite()) mono else 0f
+                    ringCursor = (ringCursor + 1) % sampleWindowSize
                 }
-                monoRing[ringCursor] = mono
-                ringCursor = (ringCursor + 1) % sampleWindowSize
+                i += step
             }
-            i += step
-        }
 
-        frameCounter++
-        if (frameCounter % 2 == 0) {
-            computeAndPublish()
+            frameCounter++
+            if (frameCounter % 2 == 0) {
+                computeAndPublish()
+            }
         }
     }
 
@@ -170,7 +188,7 @@ class SpectrumAudioProcessor : BaseAudioProcessor() {
         var peak = 0f
         for (w in 0 until 32) {
             val idx = (ringCursor + w * (sampleWindowSize / 32)) % sampleWindowSize
-            val sample = monoRing[idx]
+            val sample = monoRing[idx].let { if (it.isFinite()) it else 0f }
             waveformSamples[w] = sample
             val absVal = abs(sample)
             if (absVal > peak) peak = absVal
@@ -193,7 +211,8 @@ class SpectrumAudioProcessor : BaseAudioProcessor() {
             val magSq = (q1 * q1 + q2 * q2 - q1 * q2 * coeff).coerceAtLeast(0f)
             val norm = (sqrt(magSq) / (sampleWindowSize * 0.18f)).coerceIn(0f, 1f)
             val prev = smoothedBands[b]
-            val smooth = if (norm > prev) prev * 0.35f + norm * 0.65f else prev * 0.72f + norm * 0.28f
+            val smoothRaw = if (norm > prev) prev * 0.35f + norm * 0.65f else prev * 0.72f + norm * 0.28f
+            val smooth = if (smoothRaw.isFinite()) smoothRaw.coerceIn(0f, 1f) else 0f
             smoothedBands[b] = smooth
             bandsOut.add(smooth)
         }

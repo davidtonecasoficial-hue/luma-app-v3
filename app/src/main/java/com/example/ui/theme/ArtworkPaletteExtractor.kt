@@ -13,15 +13,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import com.example.config.LumaCrashGuard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 import kotlin.math.max
 import kotlin.math.min
 
 data class ExtractedArtworkColors(
     val primary: Color,
-    val secondary: Color
+    val secondary: Color,
+    val tertiary: Color = secondary
 )
 
 /**
@@ -36,31 +37,18 @@ object ArtworkPaletteExtractor {
         cache.get(artworkPath)?.let { return it }
 
         return withContext(Dispatchers.IO) {
-            val bmp = decodeSampledBitmap(context, artworkPath) ?: return@withContext null
-            val colors = computeDominantColors(bmp)
-            bmp.recycle()
+            val bmp = LumaCrashGuard.decodeSampledBitmap(context, artworkPath, maxDimensionPx = 128)
+                ?: return@withContext null
+            val colors = try {
+                runCatching { computeDominantColors(bmp) }.getOrNull()
+            } finally {
+                runCatching { if (!bmp.isRecycled) bmp.recycle() }
+            }
             if (colors != null) {
                 cache.put(artworkPath, colors)
             }
             colors
         }
-    }
-
-    private fun decodeSampledBitmap(context: Context, path: String): Bitmap? {
-        return runCatching {
-            val opts = BitmapFactory.Options().apply {
-                inSampleSize = 8
-                inPreferredConfig = Bitmap.Config.ARGB_8888
-            }
-            if (path.startsWith("content://") || path.startsWith("file://")) {
-                context.contentResolver.openInputStream(Uri.parse(path))?.use { stream ->
-                    BitmapFactory.decodeStream(stream, null, opts)
-                }
-            } else {
-                val f = File(path)
-                if (f.exists() && f.length() > 0L) BitmapFactory.decodeFile(f.absolutePath, opts) else null
-            }
-        }.getOrNull()
     }
 
     private fun computeDominantColors(bitmap: Bitmap): ExtractedArtworkColors? {
@@ -70,9 +58,13 @@ object ArtworkPaletteExtractor {
 
         val bucketCounts = HashMap<Int, Int>()
         val bucketRgbSum = HashMap<Int, Triple<Long, Long, Long>>()
+        var fallbackR = 0L
+        var fallbackG = 0L
+        var fallbackB = 0L
+        var fallbackCount = 0
 
-        val stepX = max(1, w / 24)
-        val stepY = max(1, h / 24)
+        val stepX = max(1, w / 28)
+        val stepY = max(1, h / 28)
         for (y in 0 until h step stepY) {
             for (x in 0 until w step stepX) {
                 val px = bitmap.getPixel(x, y)
@@ -80,13 +72,17 @@ object ArtworkPaletteExtractor {
                 val g = (px shr 8) and 0xFF
                 val b = px and 0xFF
 
+                fallbackR += r
+                fallbackG += g
+                fallbackB += b
+                fallbackCount++
+
                 val maxC = max(r, max(g, b))
                 val minC = min(r, min(g, b))
-                // Skip near-black, near-white, and flat gray pixels when colorful ones exist
                 val sat = if (maxC == 0) 0f else (maxC - minC).toFloat() / maxC.toFloat()
-                if (maxC < 28 || (minC > 228 && sat < 0.12f)) continue
+                if (maxC < 22 || (minC > 234 && sat < 0.10f)) continue
 
-                val weight = if (sat > 0.25f) 3 else 1
+                val weight = if (sat > 0.35f) 4 else if (sat > 0.16f) 2 else 1
                 val key = ((r shr 5) shl 6) or ((g shr 5) shl 3) or (b shr 5)
                 bucketCounts[key] = (bucketCounts[key] ?: 0) + weight
                 val prev = bucketRgbSum[key] ?: Triple(0L, 0L, 0L)
@@ -98,12 +94,21 @@ object ArtworkPaletteExtractor {
             }
         }
 
-        if (bucketCounts.isEmpty()) return null
+        if (bucketCounts.isEmpty()) {
+            if (fallbackCount == 0) return null
+            val avg = Color(
+                red = (fallbackR.toFloat() / fallbackCount / 255f).coerceIn(0f, 1f),
+                green = (fallbackG.toFloat() / fallbackCount / 255f).coerceIn(0f, 1f),
+                blue = (fallbackB.toFloat() / fallbackCount / 255f).coerceIn(0f, 1f),
+                alpha = 1f
+            )
+            return ExtractedArtworkColors(primary = avg, secondary = avg, tertiary = avg)
+        }
 
         val sortedKeys = bucketCounts.entries.sortedByDescending { it.value }.map { it.key }
-        fun avgColor(key: Int): Color {
-            val sum = bucketRgbSum[key]!!
-            val count = bucketCounts[key]!!.toFloat().coerceAtLeast(1f)
+        fun avgColor(key: Int): Color? {
+            val sum = bucketRgbSum[key] ?: return null
+            val count = (bucketCounts[key] ?: 1).toFloat().coerceAtLeast(1f)
             return Color(
                 red = (sum.first / count / 255f).coerceIn(0f, 1f),
                 green = (sum.second / count / 255f).coerceIn(0f, 1f),
@@ -112,9 +117,29 @@ object ArtworkPaletteExtractor {
             )
         }
 
-        val primary = avgColor(sortedKeys.first())
-        val secondary = if (sortedKeys.size > 1) avgColor(sortedKeys[1]) else primary
-        return ExtractedArtworkColors(primary = primary, secondary = secondary)
+        fun colorDistSq(a: Color, b: Color): Float {
+            val dr = a.red - b.red
+            val dg = a.green - b.green
+            val db = a.blue - b.blue
+            return dr * dr + dg * dg + db * db
+        }
+
+        val candidates = sortedKeys.take(16).mapNotNull { avgColor(it) }
+        if (candidates.isEmpty()) return null
+        val primary = candidates.first()
+        val secondary = candidates.drop(1).firstOrNull { colorDistSq(it, primary) > 0.045f }
+            ?: candidates.getOrElse(1) { primary }
+        val tertiary = candidates.drop(1).firstOrNull {
+            colorDistSq(it, primary) > 0.03f && colorDistSq(it, secondary) > 0.03f
+        } ?: candidates.getOrElse(2) {
+            Color(
+                red = ((primary.red * 0.55f + secondary.red * 0.45f) + 0.08f).coerceIn(0f, 1f),
+                green = ((primary.green * 0.55f + secondary.green * 0.45f) + 0.08f).coerceIn(0f, 1f),
+                blue = ((primary.blue * 0.55f + secondary.blue * 0.45f) + 0.08f).coerceIn(0f, 1f),
+                alpha = 1f
+            )
+        }
+        return ExtractedArtworkColors(primary = primary, secondary = secondary, tertiary = tertiary)
     }
 }
 

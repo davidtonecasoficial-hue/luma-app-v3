@@ -37,23 +37,31 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.automirrored.rounded.ViewList
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.AutoFixHigh
+import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.CollectionsBookmark
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.HealthAndSafety
+import androidx.compose.material.icons.rounded.ImageSearch
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
+import androidx.compose.material.icons.rounded.SelectAll
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -84,8 +92,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.media.LibraryHealthReport
 import com.example.data.model.AlbumSummary
 import com.example.data.model.ArtistSummary
+import com.example.data.model.CustomCollectionWithTracks
 import com.example.data.model.FolderSummary
 import com.example.data.model.GenreSummary
 import com.example.data.model.LibraryCategory
@@ -96,6 +106,7 @@ import com.example.data.model.SortOrder
 import com.example.data.model.ViewMode
 import com.example.player.PlaybackUiState
 import com.example.ui.components.TrackListItem
+import com.example.ui.components.collectionAccentColor
 import com.example.ui.theme.LiquidGlassSurface
 import com.example.ui.theme.LocalLumaGlass
 import com.example.ui.theme.LumaDropdownMenu
@@ -150,11 +161,23 @@ fun LibraryScreen(
     selectedTrackIds: Set<Long> = emptySet(),
     onToggleSelectionMode: () -> Unit = {},
     onToggleTrackSelection: (Long) -> Unit = {},
+    onSelectAllVisibleTracks: () -> Unit = {},
     onClearSelection: () -> Unit = {},
     onOpenBatchEdit: () -> Unit = {},
     onBatchAddToPlaylist: () -> Unit = {},
+    onBatchAddToCollection: () -> Unit = {},
+    onBatchAddToQueue: () -> Unit = {},
     onOpenSmartPlaylistDialog: () -> Unit = {},
-    onReorganizeLibrary: () -> Unit = {}
+    onReorganizeLibrary: () -> Unit = {},
+    collections: List<CustomCollectionWithTracks> = emptyList(),
+    libraryHealth: LibraryHealthReport = LibraryHealthReport(),
+    onOpenCollection: (Long) -> Unit = {},
+    onRequestCreateCollection: () -> Unit = {},
+    onToggleCollectionPinned: (Long, Boolean) -> Unit = { _, _ -> },
+    onAddToCollection: (MediaItemEntity) -> Unit = {},
+    onOpenInStudio: (MediaItemEntity) -> Unit = {},
+    onOpenLibraryHealth: () -> Unit = {},
+    onOpenArtworkScanner: () -> Unit = {}
 ) {
     val glass = LocalLumaGlass.current
     var sortMenuExpanded by remember { mutableStateOf(false) }
@@ -312,7 +335,7 @@ fun LibraryScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.padding(bottom = 10.dp)
             ) {
-                items(LibraryCategory.entries) { category ->
+                items(LibraryCategory.entries, key = { it.name }) { category ->
                     val selected = libraryState.selectedCategory == category
                     val chipInteraction = remember { MutableInteractionSource() }
                     val pressBounce = rememberLumaBounceScale(chipInteraction, pressedScale = 0.90f)
@@ -363,7 +386,7 @@ fun LibraryScreen(
             }
         }
 
-        // Batch Selection Action Bar
+        // Batch Selection Action Bar (Multi-select Music Manager)
         if (isSelectionMode && libraryState.selectedCategory == LibraryCategory.SONGS) {
             LiquidGlassSurface(
                 shape = RoundedCornerShape(18.dp),
@@ -378,15 +401,41 @@ fun LibraryScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "${selectedTrackIds.size} selecionada(s)",
+                        text = "${selectedTrackIds.size}/${audioTracks.size}",
                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                         color = glass.accentPrimary,
                         modifier = Modifier.weight(1f)
                     )
+                    IconButton(
+                        onClick = onSelectAllVisibleTracks,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("batch_select_all_button")
+                    ) {
+                        Icon(Icons.Rounded.SelectAll, contentDescription = "Selecionar todas", tint = glass.accentPrimary)
+                    }
+                    IconButton(
+                        onClick = onBatchAddToQueue,
+                        enabled = selectedTrackIds.isNotEmpty(),
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("batch_queue_button")
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = "Adicionar seleção à fila", tint = glass.accentPrimary)
+                    }
+                    IconButton(
+                        onClick = onBatchAddToCollection,
+                        enabled = selectedTrackIds.isNotEmpty(),
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("batch_collection_button")
+                    ) {
+                        Icon(Icons.Rounded.BookmarkAdd, contentDescription = "Adicionar seleção a coleção", tint = glass.accentPrimary)
+                    }
                     IconButton(
                         onClick = onOpenBatchEdit,
                         enabled = selectedTrackIds.isNotEmpty(),
@@ -422,7 +471,7 @@ fun LibraryScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.padding(bottom = 10.dp)
             ) {
-                items(LibraryFilter.entries) { filter ->
+                items(LibraryFilter.entries, key = { it.name }) { filter ->
                     val selected = activeFilter == filter
                     val countBadge = when (filter) {
                         LibraryFilter.MISSING_ARTWORK -> if (missingArtworkCount > 0) " ($missingArtworkCount)" else ""
@@ -565,6 +614,8 @@ fun LibraryScreen(
                 onToggleFavorite = onToggleFavorite,
                 onSmartMix = onSmartMix,
                 onAddToPlaylist = onAddToPlaylist,
+                onAddToCollection = onAddToCollection,
+                onOpenInStudio = onOpenInStudio,
                 onEditMetadata = onEditMetadata,
                 onRemoveFromLibrary = onRemoveFromLibrary
             )
@@ -584,6 +635,8 @@ fun LibraryScreen(
                 onToggleFavorite = onToggleFavorite,
                 onSmartMix = onSmartMix,
                 onAddToPlaylist = onAddToPlaylist,
+                onAddToCollection = onAddToCollection,
+                onOpenInStudio = onOpenInStudio,
                 onEditMetadata = onEditMetadata,
                 onRemoveFromLibrary = onRemoveFromLibrary
             )
@@ -627,6 +680,7 @@ fun LibraryScreen(
                                         artworkPath = album.artworkPath,
                                         contentDescription = album.name,
                                         cornerRadius = 16.dp,
+                                        maxDecodeSize = 200.dp,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(132.dp)
@@ -818,7 +872,7 @@ fun LibraryScreen(
                     contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 4.dp, bottom = bottomPad),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    item {
+                    item(key = "playlist_create_btn") {
                         LiquidGlassSurface(
                             shape = RoundedCornerShape(20.dp),
                             elevated = true,
@@ -862,7 +916,7 @@ fun LibraryScreen(
                         }
                     }
 
-                    item {
+                    item(key = "playlist_smart_btn") {
                         LiquidGlassSurface(
                             shape = RoundedCornerShape(20.dp),
                             onClick = onOpenSmartPlaylistDialog,
@@ -906,7 +960,7 @@ fun LibraryScreen(
                     }
 
                     if (playlists.isEmpty()) {
-                        item {
+                        item(key = "playlist_empty") {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -976,6 +1030,209 @@ fun LibraryScreen(
                     }
                 }
             }
+
+            LibraryCategory.COLLECTIONS -> {
+                LazyColumn(
+                    contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 4.dp, bottom = bottomPad),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item(key = "collections_health_dashboard_card") {
+                        LiquidGlassSurface(
+                            shape = RoundedCornerShape(22.dp),
+                            elevated = true,
+                            accentGlow = glass.accentPrimary,
+                            onClick = onOpenLibraryHealth,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("open_library_health_card")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(50.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(glass.pillIndicatorBg),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.HealthAndSafety,
+                                        contentDescription = null,
+                                        tint = glass.accentPrimary
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Saúde da Biblioteca • ${libraryHealth.healthScore}%",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    Text(
+                                        text = "${libraryHealth.artworkCoveragePercent}% capas • ${libraryHealth.metadataCoveragePercent}% tags • ${libraryHealth.duplicateGroupCount} dup.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = glass.textSecondary
+                                    )
+                                }
+                                Text("Painel", style = MaterialTheme.typography.labelLarge, color = glass.accentPrimary)
+                            }
+                        }
+                    }
+
+                    item(key = "collections_quick_actions") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            LiquidGlassSurface(
+                                shape = RoundedCornerShape(18.dp),
+                                onClick = onRequestCreateCollection,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("create_collection_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Rounded.CollectionsBookmark, contentDescription = null, tint = glass.accentPrimary, modifier = Modifier.size(20.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text("Nova Coleção", style = MaterialTheme.typography.labelLarge)
+                                        Text("Curadoria local", style = MaterialTheme.typography.labelSmall, color = glass.textSecondary)
+                                    }
+                                }
+                            }
+                            LiquidGlassSurface(
+                                shape = RoundedCornerShape(18.dp),
+                                onClick = onOpenArtworkScanner,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("open_artwork_scanner_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Rounded.ImageSearch, contentDescription = null, tint = glass.accentSecondary, modifier = Modifier.size(20.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text("Scanner Capas", style = MaterialTheme.typography.labelLarge)
+                                        Text(
+                                            text = if (missingArtworkCount > 0) "$missingArtworkCount em falta" else "Tudo completo",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = glass.textSecondary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (collections.isEmpty()) {
+                        item(key = "collections_empty") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 26.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Crie coleções temáticas sem alterar os ficheiros originais do dispositivo.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = glass.textSecondary
+                                )
+                            }
+                        }
+                    } else {
+                        items(collections, key = { "col_${it.collection.id}" }) { col ->
+                            val tagColor = collectionAccentColor(col.collection.accentTag)
+                            LiquidGlassSurface(
+                                shape = RoundedCornerShape(18.dp),
+                                accentGlow = if (col.collection.isPinned) tagColor else null,
+                                onClick = { onOpenCollection(col.collection.id) }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    MediaArtwork(
+                                        artworkPath = col.tracks.firstOrNull { it.artworkPath != null }?.artworkPath,
+                                        contentDescription = col.collection.name,
+                                        cornerRadius = 12.dp,
+                                        modifier = Modifier.size(52.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(tagColor)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = col.collection.name,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Text(
+                                            text = buildString {
+                                                append("${col.tracks.size} faixa(s)")
+                                                if (col.collection.description.isNotBlank()) {
+                                                    append(" • ")
+                                                    append(col.collection.description)
+                                                }
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = glass.textSecondary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { onToggleCollectionPinned(col.collection.id, !col.collection.isPinned) },
+                                        modifier = Modifier.minimumInteractiveComponentSize()
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.PushPin,
+                                            contentDescription = "Fixar coleção",
+                                            tint = if (col.collection.isPinned) tagColor else glass.textSecondary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(38.dp)
+                                            .clip(CircleShape)
+                                            .background(glass.pillIndicatorBg)
+                                            .clickable(enabled = col.tracks.isNotEmpty()) {
+                                                col.tracks.firstOrNull()?.let { first ->
+                                                    onPlayTrack(first, col.tracks)
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.PlayArrow,
+                                            contentDescription = "Reproduzir coleção",
+                                            tint = glass.accentPrimary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -999,6 +1256,8 @@ private fun MediaItemsCollection(
     onToggleFavorite: (MediaItemEntity) -> Unit,
     onSmartMix: (MediaItemEntity) -> Unit,
     onAddToPlaylist: (MediaItemEntity) -> Unit,
+    onAddToCollection: (MediaItemEntity) -> Unit = {},
+    onOpenInStudio: (MediaItemEntity) -> Unit = {},
     onEditMetadata: (MediaItemEntity) -> Unit,
     onRemoveFromLibrary: (MediaItemEntity) -> Unit
 ) {
@@ -1049,7 +1308,19 @@ private fun MediaItemsCollection(
                         onSmartMix = { onSmartMix(item) },
                         onAddToPlaylist = { onAddToPlaylist(item) },
                         onEditMetadata = { onEditMetadata(item) },
-                        onRemoveFromLibrary = { onRemoveFromLibrary(item) }
+                        onRemoveFromLibrary = { onRemoveFromLibrary(item) },
+                        extraMenuActions = { close ->
+                            DropdownMenuItem(
+                                text = { Text("Adicionar a Coleção") },
+                                leadingIcon = { Icon(Icons.Rounded.BookmarkAdd, contentDescription = null) },
+                                onClick = { close(); onAddToCollection(item) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Abrir no Luma Studio") },
+                                leadingIcon = { Icon(Icons.Rounded.GraphicEq, contentDescription = null) },
+                                onClick = { close(); onOpenInStudio(item) }
+                            )
+                        }
                     )
                 }
             }
@@ -1076,6 +1347,7 @@ private fun MediaItemsCollection(
                             artworkPath = item.artworkPath,
                             contentDescription = item.title,
                             cornerRadius = 14.dp,
+                            maxDecodeSize = 200.dp,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(124.dp)

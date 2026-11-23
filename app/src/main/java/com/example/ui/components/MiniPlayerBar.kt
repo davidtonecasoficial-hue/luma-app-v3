@@ -36,11 +36,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -48,13 +50,16 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.SurfaceMaterial
+import com.example.player.PlaybackProgressUiState
 import com.example.player.PlaybackUiState
 import com.example.ui.theme.LiquidGlassSurface
 import com.example.ui.theme.LocalLumaGlass
 import com.example.ui.theme.MediaArtwork
 import com.example.ui.theme.SculptedCircleButton
 import com.example.ui.theme.rememberLumaBounceScale
+import kotlinx.coroutines.flow.StateFlow
 
 @Composable
 fun MiniPlayerBar(
@@ -64,14 +69,12 @@ fun MiniPlayerBar(
     onNext: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-    onPrevious: () -> Unit = {}
+    onPrevious: () -> Unit = {},
+    progressFlow: StateFlow<PlaybackProgressUiState>? = null
 ) {
     val track = playbackState.currentTrack ?: return
     val glass = LocalLumaGlass.current
     val haptics = LocalHapticFeedback.current
-    val progress = if (playbackState.durationMs > 0L) {
-        (playbackState.positionMs.toFloat() / playbackState.durationMs.toFloat()).coerceIn(0f, 1f)
-    } else 0f
 
     LiquidGlassSurface(
         shape = RoundedCornerShape(22.dp),
@@ -175,17 +178,16 @@ fun MiniPlayerBar(
                 } else {
                     val playInteraction = remember { MutableInteractionSource() }
                     val playScale = rememberLumaBounceScale(playInteraction)
+                    val playBtnBrush = remember(glass.accentPrimary, glass.accentSecondary) {
+                        Brush.linearGradient(colors = listOf(glass.accentPrimary, glass.accentSecondary))
+                    }
                     Box(
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
                             .size(40.dp)
                             .graphicsLayer { scaleX = playScale; scaleY = playScale }
                             .clip(CircleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(glass.accentPrimary, glass.accentSecondary)
-                                )
-                            )
+                            .background(playBtnBrush)
                             .clickable(
                                 interactionSource = playInteraction,
                                 indication = androidx.compose.material3.ripple(),
@@ -259,23 +261,45 @@ fun MiniPlayerBar(
                 }
             }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp)
-                    .padding(bottom = 6.dp)
-            ) {
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .clip(RoundedCornerShape(50)),
-                    color = glass.accentPrimary,
-                    trackColor = glass.textPrimary.copy(alpha = 0.14f),
-                    strokeCap = StrokeCap.Round
-                )
-            }
+            MiniPlayerProgressBar(
+                progressFlow = progressFlow,
+                fallbackPositionMs = playbackState.positionMs,
+                fallbackDurationMs = playbackState.durationMs,
+                accentColor = glass.accentPrimary,
+                trackColor = glass.textPrimary.copy(alpha = 0.14f)
+            )
         }
+    }
+}
+
+@Composable
+private fun MiniPlayerProgressBar(
+    progressFlow: StateFlow<PlaybackProgressUiState>?,
+    fallbackPositionMs: Long,
+    fallbackDurationMs: Long,
+    accentColor: Color,
+    trackColor: Color
+) {
+    val progressState = progressFlow?.collectAsStateWithLifecycle()?.value
+    val pos = progressState?.positionMs ?: fallbackPositionMs
+    val dur = (progressState?.durationMs?.takeIf { it > 0L } ?: fallbackDurationMs).coerceAtLeast(0L)
+    val progress = if (dur > 0L) (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f) else 0f
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp)
+            .padding(bottom = 6.dp)
+    ) {
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(3.dp)
+                .clip(RoundedCornerShape(50)),
+            color = accentColor,
+            trackColor = trackColor,
+            strokeCap = StrokeCap.Round
+        )
     }
 }

@@ -40,12 +40,14 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
@@ -126,6 +128,7 @@ fun LiquidMorphBottomNavigation(
     showLabels: Boolean = false
 ) {
     val glass = LocalLumaGlass.current
+    val strings = com.example.ui.theme.LocalLumaStrings.current
     val haptics = LocalHapticFeedback.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -201,14 +204,16 @@ fun LiquidMorphBottomNavigation(
         ) {
             // STATE A: Normal Navigation Capsule + Separated Circular Search Button
             val navAlpha = (1f - morphProgress * 1.4f).coerceIn(0f, 1f)
-            val navShiftX = if (reduceMotion) 0.dp else (-14).dp * morphProgress
+            val navShiftPx = with(LocalDensity.current) { (if (reduceMotion) 0.dp else (-14).dp * morphProgress).toPx() }
 
             if (navAlpha > 0.01f) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .alpha(navAlpha)
-                        .offset(x = navShiftX),
+                        .graphicsLayer {
+                            alpha = navAlpha
+                            translationX = navShiftPx
+                        },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -250,7 +255,10 @@ fun LiquidMorphBottomNavigation(
                     LiquidGlassCapsule(
                         modifier = Modifier
                             .size(62.dp)
-                            .scale(searchBtnScale)
+                            .graphicsLayer {
+                                scaleX = searchBtnScale
+                                scaleY = searchBtnScale
+                            }
                     ) {
                         Box(
                             modifier = Modifier
@@ -293,7 +301,7 @@ fun LiquidMorphBottomNavigation(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .alpha(searchAlpha),
+                        .graphicsLayer { alpha = searchAlpha },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -313,7 +321,11 @@ fun LiquidMorphBottomNavigation(
                     LiquidGlassCapsule(
                         modifier = Modifier
                             .size(56.dp)
-                            .scale(filterScale * filterPressScale)
+                            .graphicsLayer {
+                                val s = filterScale * filterPressScale
+                                scaleX = s
+                                scaleY = s
+                            }
                     ) {
                         val isFilterActive = searchFilter != SearchFilter.ALL
                         Box(
@@ -411,7 +423,7 @@ fun LiquidMorphBottomNavigation(
                                 ) {
                                     if (searchQuery.isEmpty()) {
                                         Text(
-                                            text = "Músicas, Álbuns ou Artistas",
+                                            text = strings.searchHint,
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = glass.textSecondary.copy(alpha = 0.85f),
                                             maxLines = 1,
@@ -473,6 +485,7 @@ private fun SlidingPillTabRow(
     onSelectTab: (BottomNavTab) -> Unit
 ) {
     val glass = LocalLumaGlass.current
+    val strings = com.example.ui.theme.LocalLumaStrings.current
     val density = LocalDensity.current
     val tabs = BottomNavTab.entries
     val selectedIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
@@ -491,15 +504,18 @@ private fun SlidingPillTabRow(
         label = "slidingPillSlot"
     )
 
-    // Signature per-tab icon animations (Home bounce, Library groove tilt, Settings gear roll)
+    // Signature per-tab icon animations (Home bounce, Library groove tilt, Discover compass pulse, Settings gear roll)
     var homePulseCount by remember { mutableIntStateOf(0) }
     var libraryPulseCount by remember { mutableIntStateOf(0) }
+    var discoverPulseCount by remember { mutableIntStateOf(0) }
     var settingsPulseCount by remember { mutableIntStateOf(0) }
 
     val homeBounceScale = remember { Animatable(1f) }
     val homeBounceY = remember { Animatable(0f) }
     val libraryScale = remember { Animatable(1f) }
     val libraryTilt = remember { Animatable(0f) }
+    val discoverScale = remember { Animatable(1f) }
+    val discoverTilt = remember { Animatable(0f) }
     val settingsRoll = remember { Animatable(0f) }
     val settingsScale = remember { Animatable(1f) }
 
@@ -527,6 +543,19 @@ private fun SlidingPillTabRow(
             launch {
                 libraryTilt.snapTo(-16f)
                 libraryTilt.animateTo(0f, spring(dampingRatio = 0.36f, stiffness = 440f))
+            }
+        }
+    }
+
+    LaunchedEffect(selectedTab, discoverPulseCount, reduceMotion) {
+        if (selectedTab == BottomNavTab.DISCOVER && !reduceMotion) {
+            launch {
+                discoverScale.snapTo(1.22f)
+                discoverScale.animateTo(1f, spring(dampingRatio = 0.44f, stiffness = 500f))
+            }
+            launch {
+                discoverTilt.snapTo(24f)
+                discoverTilt.animateTo(0f, spring(dampingRatio = 0.44f, stiffness = 360f))
             }
         }
     }
@@ -565,6 +594,8 @@ private fun SlidingPillTabRow(
                 val pillTop = squashY
                 val radius = pillHeight / 2f
                 val corner = CornerRadius(radius, radius)
+
+                if (size.minDimension <= 1f || pillWidth <= 1f || pillHeight <= 1f) return@drawBehind
 
                 when (glass.surfaceMaterial) {
                     SurfaceMaterial.NEUMORPHIC_BW -> {
@@ -607,6 +638,7 @@ private fun SlidingPillTabRow(
 
                     SurfaceMaterial.NEUMORPHIC_SOFT -> {
                         // Crystal Soft-UI Liquid Lens pill with rose-tinted refraction & optical upper-lip gleam
+                        val glowR = (pillWidth * 0.68f).coerceAtLeast(1f)
                         drawRoundRect(
                             brush = Brush.radialGradient(
                                 colors = listOf(
@@ -614,7 +646,7 @@ private fun SlidingPillTabRow(
                                     Color.Transparent
                                 ),
                                 center = Offset(clampedLeft + pillWidth / 2f, size.height * 0.56f),
-                                radius = pillWidth * 0.68f
+                                radius = glowR
                             ),
                             topLeft = Offset(clampedLeft, pillTop),
                             size = Size(pillWidth, pillHeight),
@@ -703,6 +735,7 @@ private fun SlidingPillTabRow(
                         val lightPillEnd = lerp(Color.White, glass.accentSecondary, 0.16f)
 
                         // Soft optical glow beneath active liquid-glass droplet
+                        val dropletGlowR = (pillWidth * 0.72f).coerceAtLeast(1f)
                         drawRoundRect(
                             brush = Brush.radialGradient(
                                 colors = listOf(
@@ -710,7 +743,7 @@ private fun SlidingPillTabRow(
                                     Color.Transparent
                                 ),
                                 center = Offset(clampedLeft + pillWidth / 2f, size.height * 0.55f),
-                                radius = pillWidth * 0.72f
+                                radius = dropletGlowR
                             ),
                             topLeft = Offset(clampedLeft, pillTop),
                             size = Size(pillWidth, pillHeight),
@@ -759,6 +792,7 @@ private fun SlidingPillTabRow(
                         )
 
                         // Specular glint near upper-right edge of the sliding glass pill
+                        val glintR = (pillHeight * 0.58f).coerceAtLeast(1f)
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
@@ -766,10 +800,10 @@ private fun SlidingPillTabRow(
                                     Color.Transparent
                                 ),
                                 center = Offset(clampedLeft + pillWidth * 0.78f, pillTop + pillHeight * 0.24f),
-                                radius = pillHeight * 0.58f
+                                radius = glintR
                             ),
                             center = Offset(clampedLeft + pillWidth * 0.78f, pillTop + pillHeight * 0.24f),
-                            radius = pillHeight * 0.58f
+                            radius = glintR
                         )
 
                         // Crisp Fresnel rim around the sliding glass pill
@@ -841,12 +875,21 @@ private fun SlidingPillTabRow(
                 val icon = when (tab) {
                     BottomNavTab.HOME -> if (isSelected) Icons.Rounded.Home else Icons.Outlined.Home
                     BottomNavTab.LIBRARY -> if (isSelected) Icons.Rounded.LibraryMusic else Icons.Outlined.LibraryMusic
+                    BottomNavTab.DISCOVER -> if (isSelected) Icons.Rounded.Explore else Icons.Outlined.Explore
                     BottomNavTab.SETTINGS -> if (isSelected) Icons.Rounded.Settings else Icons.Outlined.Settings
+                }
+
+                val tabLabel = when (tab) {
+                    BottomNavTab.HOME -> strings.navHome
+                    BottomNavTab.LIBRARY -> strings.navLibrary
+                    BottomNavTab.DISCOVER -> strings.navDiscover
+                    BottomNavTab.SETTINGS -> strings.navSettings
                 }
 
                 val testTag = when (tab) {
                     BottomNavTab.HOME -> "nav_tab_home"
                     BottomNavTab.LIBRARY -> "nav_tab_library"
+                    BottomNavTab.DISCOVER -> "nav_tab_discover"
                     BottomNavTab.SETTINGS -> "nav_tab_settings"
                 }
 
@@ -857,7 +900,7 @@ private fun SlidingPillTabRow(
                         .clip(RoundedCornerShape(50))
                         .semantics {
                             selected = isSelected
-                            contentDescription = tab.label
+                            contentDescription = tabLabel
                         }
                         .clickable(
                             enabled = enabled,
@@ -868,6 +911,7 @@ private fun SlidingPillTabRow(
                                 when (tab) {
                                     BottomNavTab.HOME -> homePulseCount++
                                     BottomNavTab.LIBRARY -> libraryPulseCount++
+                                    BottomNavTab.DISCOVER -> discoverPulseCount++
                                     BottomNavTab.SETTINGS -> settingsPulseCount++
                                 }
                                 onSelectTab(tab)
@@ -878,8 +922,8 @@ private fun SlidingPillTabRow(
                 ) {
                     val iconModifier = Modifier
                         .size(26.dp)
-                        .alpha(contentAlpha)
                         .graphicsLayer {
+                            alpha = contentAlpha
                             when (tab) {
                                 BottomNavTab.HOME -> {
                                     val totalScale = itemScale * homeBounceScale.value
@@ -892,6 +936,12 @@ private fun SlidingPillTabRow(
                                     scaleX = totalScale
                                     scaleY = totalScale
                                     rotationZ = libraryTilt.value
+                                }
+                                BottomNavTab.DISCOVER -> {
+                                    val totalScale = itemScale * discoverScale.value
+                                    scaleX = totalScale
+                                    scaleY = totalScale
+                                    rotationZ = discoverTilt.value
                                 }
                                 BottomNavTab.SETTINGS -> {
                                     val totalScale = itemScale * settingsScale.value
@@ -909,12 +959,12 @@ private fun SlidingPillTabRow(
                         ) {
                             Icon(
                                 imageVector = icon,
-                                contentDescription = tab.label,
+                                contentDescription = tabLabel,
                                 tint = contentColor,
                                 modifier = iconModifier.size(21.dp)
                             )
                             Text(
-                                text = tab.label,
+                                text = tabLabel,
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontSize = 10.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
@@ -926,7 +976,7 @@ private fun SlidingPillTabRow(
                     } else {
                         Icon(
                             imageVector = icon,
-                            contentDescription = tab.label,
+                            contentDescription = tabLabel,
                             tint = contentColor,
                             modifier = iconModifier
                         )

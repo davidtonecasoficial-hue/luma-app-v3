@@ -77,6 +77,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.media.MediaPermissionStatus
 import com.example.data.media.SmartPlaylistRule
@@ -89,6 +90,7 @@ import com.example.data.model.MediaItemEntity
 import com.example.data.model.MoodType
 import com.example.data.model.PlaylistWithTracks
 import com.example.data.model.SurfaceMaterial
+import com.example.player.PlaybackProgressUiState
 import com.example.player.PlaybackUiState
 import com.example.ui.components.TrackListItem
 import com.example.ui.theme.LiquidGlassSurface
@@ -99,6 +101,7 @@ import com.example.ui.theme.SculptedCircleButton
 import com.example.ui.theme.formatDuration
 import com.example.ui.theme.rememberLumaBounceScale
 import java.util.Calendar
+import kotlinx.coroutines.flow.StateFlow
 
 @Composable
 fun HomeScreen(
@@ -139,13 +142,20 @@ fun HomeScreen(
     onOpenInsights: () -> Unit = {},
     onOpenArtist: (String) -> Unit = {},
     onOpenVideo: (MediaItemEntity) -> Unit = {},
-    onCreateSmartPlaylist: (SmartPlaylistRule) -> Unit = {}
+    onCreateSmartPlaylist: (SmartPlaylistRule) -> Unit = {},
+    isAmbientPlaying: Boolean = false,
+    onOpenAmbientMixer: () -> Unit = {},
+    progressFlow: StateFlow<PlaybackProgressUiState>? = null
 ) {
     val glass = LocalLumaGlass.current
-    val greeting = rememberContextualGreeting()
+    val strings = com.example.ui.theme.LocalLumaStrings.current
+    val greeting = remember(strings) { rememberContextualGreeting(strings) }
     val orderedSections = remember(settings.homeSectionOrder, settings.hiddenHomeSections) {
         HomeSectionType.parseOrder(settings.homeSectionOrder)
             .filter { it.key !in settings.hiddenHomeSections }
+    }
+    val recentItems = remember(history) {
+        history.mapNotNull { it.media }.distinctBy { it.id }.take(5)
     }
 
     LazyColumn(
@@ -161,7 +171,7 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // Header Row
-        item {
+        item(key = "home_header") {
             LumaSectionEntrance(index = 0) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -174,6 +184,26 @@ fun HomeScreen(
                             color = MaterialTheme.colorScheme.onBackground
                         )
                     }
+
+                    LiquidGlassSurface(
+                        shape = CircleShape,
+                        elevated = isAmbientPlaying,
+                        accentGlow = if (isAmbientPlaying) glass.accentPrimary else null,
+                        onClick = onOpenAmbientMixer,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("home_ambient_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Icon(
+                                imageVector = Icons.Rounded.Spa,
+                                contentDescription = strings.ambientTitle,
+                                tint = if (isAmbientPlaying) glass.accentPrimary else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
 
                     LiquidGlassSurface(
                         shape = CircleShape,
@@ -232,7 +262,7 @@ fun HomeScreen(
 
         // Empty State when no local media is indexed yet
         if (allMedia.isEmpty()) {
-            item {
+            item(key = "home_empty") {
                 LumaSectionEntrance(index = 1) {
                     LiquidGlassSurface(
                         shape = RoundedCornerShape(28.dp),
@@ -255,15 +285,16 @@ fun HomeScreen(
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "A sua biblioteca local está pronta",
+                                text = strings.homeEmptyTitle,
                                 style = MaterialTheme.typography.titleLarge,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Ative a varredura automática via MediaStore para encontrar músicas e vídeos do dispositivo, ou importe ficheiros manualmente.",
+                                text = strings.homeEmptyBody,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
                             )
                             if (isScanning) {
                                 Spacer(modifier = Modifier.height(10.dp))
@@ -334,7 +365,7 @@ fun HomeScreen(
                 }
             }
         } else if (!permissionStatus.hasAnyMediaPermission) {
-            item {
+            item(key = "home_perm_banner") {
                 LiquidGlassSurface(
                     shape = RoundedCornerShape(22.dp),
                     onClick = onRequestAutoScan,
@@ -367,11 +398,12 @@ fun HomeScreen(
 
         // Spotlight Card for Active Playback
         playbackState.currentTrack?.let { current ->
-            item {
+            item(key = "home_spotlight") {
                 LumaSectionEntrance(index = 1) {
                     NowPlayingSpotlightCard(
                         track = current,
                         playbackState = playbackState,
+                        progressFlow = progressFlow,
                         onExpand = onExpandPlayer,
                         onTogglePlayPause = onTogglePlayPause,
                         onNext = onNext,
@@ -383,38 +415,38 @@ fun HomeScreen(
         }
 
         // Quick Shortcuts Row (Álbuns, Artistas, Pastas, Vídeos, Insights)
-        item {
+        item(key = "home_shortcuts") {
             LumaSectionEntrance(index = 2) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    item {
+                    item(key = "sc_albums") {
                         ShortcutGlassChip(
                             icon = Icons.Rounded.Album,
                             label = "Álbuns",
                             onClick = { onOpenCategory(LibraryCategory.ALBUMS) }
                         )
                     }
-                    item {
+                    item(key = "sc_artists") {
                         ShortcutGlassChip(
                             icon = Icons.Rounded.Person,
                             label = "Artistas",
                             onClick = { onOpenCategory(LibraryCategory.ARTISTS) }
                         )
                     }
-                    item {
+                    item(key = "sc_folders") {
                         ShortcutGlassChip(
                             icon = Icons.Rounded.Folder,
                             label = "Pastas",
                             onClick = { onOpenCategory(LibraryCategory.FOLDERS) }
                         )
                     }
-                    item {
+                    item(key = "sc_videos") {
                         ShortcutGlassChip(
                             icon = Icons.Rounded.VideoLibrary,
                             label = "Vídeos",
                             onClick = { onOpenCategory(LibraryCategory.VIDEOS) }
                         )
                     }
-                    item {
+                    item(key = "sc_insights") {
                         ShortcutGlassChip(
                             icon = Icons.Rounded.BarChart,
                             label = "Insights",
@@ -550,7 +582,7 @@ fun HomeScreen(
                                     onAction = { onOpenCategory(LibraryCategory.PLAYLISTS) }
                                 )
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    items(SmartPlaylistRule.entries) { rule ->
+                                    items(SmartPlaylistRule.entries, key = { "rule_${it.name}" }) { rule ->
                                         LiquidGlassSurface(
                                             shape = RoundedCornerShape(20.dp),
                                             onClick = { onCreateSmartPlaylist(rule) },
@@ -606,7 +638,7 @@ fun HomeScreen(
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    items(MoodType.entries) { mood ->
+                                    items(MoodType.entries, key = { "mood_${it.name}" }) { mood ->
                                         val icon = when (mood) {
                                             MoodType.CHILL -> Icons.Rounded.Spa
                                             MoodType.FOCUS -> Icons.Rounded.SelfImprovement
@@ -891,7 +923,6 @@ fun HomeScreen(
                 }
 
                 HomeSectionType.RECENTLY_ADDED -> {
-                    val recentItems = history.mapNotNull { it.media }.distinctBy { it.id }.take(5)
                     if (recentItems.isNotEmpty()) {
                         item(key = "sec_recent_hist_header") {
                             SectionHeader(
@@ -949,6 +980,7 @@ fun HomeScreen(
 private fun NowPlayingSpotlightCard(
     track: MediaItemEntity,
     playbackState: PlaybackUiState,
+    progressFlow: StateFlow<PlaybackProgressUiState>?,
     onExpand: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onNext: () -> Unit,
@@ -956,9 +988,6 @@ private fun NowPlayingSpotlightCard(
     onToggleFavorite: () -> Unit
 ) {
     val glass = LocalLumaGlass.current
-    val progress = if (playbackState.durationMs > 0L) {
-        (playbackState.positionMs.toFloat() / playbackState.durationMs.toFloat()).coerceIn(0f, 1f)
-    } else 0f
 
     LiquidGlassSurface(
         shape = RoundedCornerShape(26.dp),
@@ -973,6 +1002,7 @@ private fun NowPlayingSpotlightCard(
                     artworkPath = track.artworkPath,
                     contentDescription = track.title,
                     cornerRadius = 18.dp,
+                    maxDecodeSize = 180.dp,
                     modifier = Modifier.size(82.dp)
                 )
                 Spacer(modifier = Modifier.width(14.dp))
@@ -1021,15 +1051,12 @@ private fun NowPlayingSpotlightCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(50)),
-                color = glass.accentPrimary,
-                trackColor = glass.textPrimary.copy(alpha = 0.14f),
-                strokeCap = StrokeCap.Round
+            SpotlightProgressIndicator(
+                progressFlow = progressFlow,
+                fallbackPositionMs = playbackState.positionMs,
+                fallbackDurationMs = playbackState.durationMs,
+                accentColor = glass.accentPrimary,
+                trackColor = glass.textPrimary.copy(alpha = 0.14f)
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -1039,10 +1066,10 @@ private fun NowPlayingSpotlightCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = formatDuration(playbackState.positionMs),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                SpotlightTimeText(
+                    progressFlow = progressFlow,
+                    fallbackMs = playbackState.positionMs,
+                    isDuration = false
                 )
 
                 Row(
@@ -1118,14 +1145,60 @@ private fun NowPlayingSpotlightCard(
                     }
                 }
 
-                Text(
-                    text = formatDuration(playbackState.durationMs),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                SpotlightTimeText(
+                    progressFlow = progressFlow,
+                    fallbackMs = playbackState.durationMs,
+                    isDuration = true
                 )
             }
         }
     }
+}
+
+@Composable
+private fun SpotlightProgressIndicator(
+    progressFlow: StateFlow<PlaybackProgressUiState>?,
+    fallbackPositionMs: Long,
+    fallbackDurationMs: Long,
+    accentColor: androidx.compose.ui.graphics.Color,
+    trackColor: androidx.compose.ui.graphics.Color
+) {
+    val liveProgress = progressFlow?.collectAsStateWithLifecycle()?.value
+    val positionMs = liveProgress?.positionMs ?: fallbackPositionMs
+    val durationMs = liveProgress?.durationMs?.takeIf { it > 0L } ?: fallbackDurationMs
+    val progress = if (durationMs > 0L) {
+        (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+
+    LinearProgressIndicator(
+        progress = { progress },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(4.dp)
+            .clip(RoundedCornerShape(50)),
+        color = accentColor,
+        trackColor = trackColor,
+        strokeCap = StrokeCap.Round
+    )
+}
+
+@Composable
+private fun SpotlightTimeText(
+    progressFlow: StateFlow<PlaybackProgressUiState>?,
+    fallbackMs: Long,
+    isDuration: Boolean
+) {
+    val liveProgress = progressFlow?.collectAsStateWithLifecycle()?.value
+    val targetMs = if (isDuration) {
+        liveProgress?.durationMs?.takeIf { it > 0L } ?: fallbackMs
+    } else {
+        liveProgress?.positionMs ?: fallbackMs
+    }
+    Text(
+        text = formatDuration(targetMs),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @Composable
@@ -1186,11 +1259,11 @@ private fun SectionHeader(
     }
 }
 
-private fun rememberContextualGreeting(): String {
+private fun rememberContextualGreeting(strings: com.example.ui.theme.LumaStrings): String {
     val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
     return when (hour) {
-        in 5..11 -> "Bom dia"
-        in 12..18 -> "Boa tarde"
-        else -> "Boa noite"
+        in 5..11 -> strings.greetingMorning
+        in 12..18 -> strings.greetingAfternoon
+        else -> strings.greetingEvening
     }
 }

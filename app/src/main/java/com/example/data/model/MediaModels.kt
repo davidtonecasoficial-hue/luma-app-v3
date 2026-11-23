@@ -1,5 +1,6 @@
 package com.example.data.model
 
+import androidx.compose.runtime.Immutable
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.Index
@@ -52,6 +53,7 @@ enum class LibraryCategory(val label: String) {
     GENRES("Géneros"),
     FOLDERS("Pastas"),
     PLAYLISTS("Playlists"),
+    COLLECTIONS("Coleções"),
     FAVORITES("Favoritos"),
     VIDEOS("Vídeos")
 }
@@ -73,6 +75,7 @@ enum class MoodType(val label: String, val subtitle: String) {
         Index(value = ["album"])
     ]
 )
+@Immutable
 data class MediaItemEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val uri: String,
@@ -103,6 +106,7 @@ data class MediaItemEntity(
     val isAvailable: Boolean = true
 )
 
+@Immutable
 @Entity(tableName = "playlists")
 data class PlaylistEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -124,6 +128,7 @@ data class PlaylistTrackCrossRef(
     val addedAt: Long = System.currentTimeMillis()
 )
 
+@Immutable
 data class PlaylistWithTracks(
     @Embedded val playlist: PlaylistEntity,
     @Relation(
@@ -138,6 +143,7 @@ data class PlaylistWithTracks(
     val tracks: List<MediaItemEntity>
 )
 
+@Immutable
 @Entity(
     tableName = "playback_history",
     indices = [Index(value = ["mediaId"]), Index(value = ["playedAt"])]
@@ -148,6 +154,7 @@ data class PlaybackHistoryEntity(
     val playedAt: Long = System.currentTimeMillis()
 )
 
+@Immutable
 data class HistoryWithMedia(
     @Embedded val history: PlaybackHistoryEntity,
     @Relation(
@@ -163,6 +170,62 @@ data class QueueItemEntity(
     val mediaId: Long
 )
 
+@Immutable
+@Entity(tableName = "custom_collections")
+data class CustomCollectionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val description: String = "",
+    val accentTag: String = "emerald",
+    val iconKey: String = "sparkles",
+    val isPinned: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "collection_tracks",
+    primaryKeys = ["collectionId", "mediaId"],
+    indices = [Index(value = ["mediaId"])]
+)
+data class CollectionTrackCrossRef(
+    val collectionId: Long,
+    val mediaId: Long,
+    val position: Int = 0,
+    val addedAt: Long = System.currentTimeMillis()
+)
+
+@Immutable
+data class CustomCollectionWithTracks(
+    @Embedded val collection: CustomCollectionEntity,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "id",
+        associateBy = Junction(
+            value = CollectionTrackCrossRef::class,
+            parentColumn = "collectionId",
+            entityColumn = "mediaId"
+        )
+    )
+    val tracks: List<MediaItemEntity>
+)
+
+@Immutable
+@Entity(
+    tableName = "listening_sessions",
+    indices = [Index(value = ["mediaId"]), Index(value = ["startedAt"])]
+)
+data class ListeningSessionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val mediaId: Long,
+    val startedAt: Long = System.currentTimeMillis(),
+    val durationListenedMs: Long = 0L,
+    val completedTrack: Boolean = false,
+    val skippedEarly: Boolean = false,
+    val outputRoute: String = "SPEAKER"
+)
+
+@Immutable
 data class AlbumSummary(
     val name: String,
     val artist: String,
@@ -172,6 +235,7 @@ data class AlbumSummary(
     val tracks: List<MediaItemEntity>
 )
 
+@Immutable
 data class ArtistSummary(
     val name: String,
     val trackCount: Int,
@@ -180,6 +244,7 @@ data class ArtistSummary(
     val tracks: List<MediaItemEntity>
 )
 
+@Immutable
 data class FolderSummary(
     val name: String,
     val path: String,
@@ -187,6 +252,7 @@ data class FolderSummary(
     val tracks: List<MediaItemEntity>
 )
 
+@Immutable
 data class GenreSummary(
     val name: String,
     val trackCount: Int,
@@ -194,6 +260,7 @@ data class GenreSummary(
     val tracks: List<MediaItemEntity>
 )
 
+@Immutable
 data class DuplicateGroup(
     val titleLabel: String,
     val reasonLabel: String,
@@ -324,6 +391,31 @@ enum class HomeSectionType(val key: String, val label: String) {
     }
 }
 
+enum class AppLanguage(val code: String, val nativeLabel: String) {
+    SYSTEM("system", "Sistema (Auto)"),
+    PT("pt", "Português"),
+    EN("en", "English"),
+    ES("es", "Español"),
+    FR("fr", "Français")
+}
+
+enum class AmbientSoundType(val label: String, val subtitle: String) {
+    OFF("Desligado", "Sem camada de ambiente"),
+    WARM_RAIN("Chuva Suave", "Gotas constantes para relaxar"),
+    OCEAN_WAVES("Ondas do Mar", "Cadência lenta e orgânica"),
+    CRACKLING_HEARTH("Lareira Acolhedora", "Estalos suaves de madeira"),
+    FOCUS_PINK("Foco Rosa", "Som quente para concentração")
+}
+
+@Immutable
+data class TrackBookmark(
+    val id: Long,
+    val mediaId: Long,
+    val positionMs: Long,
+    val label: String
+)
+
+@Immutable
 data class CustomAudioPreset(
     val name: String,
     val bandLevelsMb: List<Int>,
@@ -334,6 +426,7 @@ data class CustomAudioPreset(
     val stereoBalance: Float
 )
 
+@Immutable
 data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val themeStyle: AppThemeStyle = AppThemeStyle.LUMA_GLASS,
@@ -344,6 +437,7 @@ data class AppSettings(
     val hapticsEnabled: Boolean = true,
     val hapticIntensity: HapticIntensity = HapticIntensity.SUBTLE,
     val playbackSpeed: Float = 1.0f,
+    val pitchSemitones: Float = 0f,
     val crossfadeEnabled: Boolean = false,
     val crossfadeDurationSec: Int = 3,
     val gaplessPlaybackEnabled: Boolean = true,
@@ -358,6 +452,8 @@ data class AppSettings(
     val reactiveLightingEnabled: Boolean = true,
     val coverGesturesEnabled: Boolean = true,
     val coverDoubleTapAction: CoverDoubleTapAction = CoverDoubleTapAction.PLAY_PAUSE,
+    val shakeToSkipEnabled: Boolean = false,
+    val queueRadioEnabled: Boolean = false,
     val minimalistPlayerMode: Boolean = false,
     val albumArtAnimationEnabled: Boolean = true,
     val playbackAnimationStyle: PlaybackAnimationStyle = PlaybackAnimationStyle.SPRING_FLOAT,
@@ -373,8 +469,13 @@ data class AppSettings(
     val lyricsFontScale: Float = 1.0f,
     val lyricsCentered: Boolean = true,
     val customAudioPresetsJson: String = "[]",
+    val trackBookmarksJson: String = "[]",
     val hasSeenWelcomeIntro: Boolean = false,
     val lastMediaId: Long = -1L,
     val lastPositionMs: Long = 0L,
-    val totalListeningTimeMs: Long = 0L
+    val totalListeningTimeMs: Long = 0L,
+    val appLanguage: AppLanguage = AppLanguage.PT,
+    val autoPauseOnDisconnect: Boolean = true,
+    val autoResumeOnBluetooth: Boolean = false,
+    val headsetButtonDoubleTapSkip: Boolean = true
 )

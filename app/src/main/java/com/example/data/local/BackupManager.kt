@@ -1,10 +1,12 @@
 package com.example.data.local
 
 import com.example.data.model.AccentPalette
+import com.example.data.model.AppLanguage
 import com.example.data.model.AppSettings
 import com.example.data.model.AppThemeStyle
 import com.example.data.model.ArtworkShape
 import com.example.data.model.CoverDoubleTapAction
+import com.example.data.model.CustomCollectionWithTracks
 import com.example.data.model.GlassQuality
 import com.example.data.model.HapticIntensity
 import com.example.data.model.HomeSectionType
@@ -26,17 +28,20 @@ data class BackupRestoreResult(
 )
 
 /**
- * Pure offline JSON backup/restore utility for Luma Player playlists and settings.
+ * Offline JSON backup/restore utility v2 for Luma Player settings, playlists,
+ * custom collections, and per-track metadata (lyrics, offset, tags, favorites).
  */
 object BackupManager {
 
-    private const val BACKUP_FORMAT_VERSION = 1
+    private const val BACKUP_FORMAT_VERSION = 2
 
     fun serializeBackup(
         settings: AppSettings,
         playlists: List<PlaylistWithTracks>,
         includeSettings: Boolean = true,
-        includePlaylists: Boolean = true
+        includePlaylists: Boolean = true,
+        collections: List<CustomCollectionWithTracks> = emptyList(),
+        mediaMetadata: List<MediaItemEntity> = emptyList()
     ): String {
         val root = JSONObject()
         root.put("app", "Luma Player")
@@ -65,6 +70,55 @@ object BackupManager {
                 plsArray.put(plObj)
             }
             root.put("playlists", plsArray)
+        }
+
+        if (collections.isNotEmpty()) {
+            val colsArray = JSONArray()
+            collections.forEach { col ->
+                val colObj = JSONObject()
+                colObj.put("name", col.collection.name)
+                colObj.put("description", col.collection.description)
+                colObj.put("accentTag", col.collection.accentTag)
+                colObj.put("isPinned", col.collection.isPinned)
+                val tracksArr = JSONArray()
+                col.tracks.forEach { track ->
+                    tracksArr.put(
+                        JSONObject().apply {
+                            put("uri", track.uri)
+                            put("fileName", track.fileName)
+                            put("title", track.title)
+                        }
+                    )
+                }
+                colObj.put("tracks", tracksArr)
+                colsArray.put(colObj)
+            }
+            root.put("collections", colsArray)
+        }
+
+        if (mediaMetadata.isNotEmpty()) {
+            val metaArray = JSONArray()
+            mediaMetadata
+                .filter { it.isFavorite || !it.embeddedLyrics.isNullOrBlank() || it.lyricsOffsetMs != 0L || it.genre.isNotBlank() || it.releaseYear > 0 }
+                .forEach { track ->
+                    metaArray.put(
+                        JSONObject().apply {
+                            put("uri", track.uri)
+                            put("fileName", track.fileName)
+                            put("sizeBytes", track.sizeBytes)
+                            put("title", track.title)
+                            put("artist", track.artist)
+                            put("album", track.album)
+                            put("genre", track.genre)
+                            put("releaseYear", track.releaseYear)
+                            put("trackNumber", track.trackNumber)
+                            put("isFavorite", track.isFavorite)
+                            put("lyricsRaw", track.embeddedLyrics ?: "")
+                            put("lyricsOffsetMs", track.lyricsOffsetMs)
+                        }
+                    )
+                }
+            root.put("trackMetadata", metaArray)
         }
 
         return root.toString(2)
@@ -101,9 +155,61 @@ object BackupManager {
             playlists.add(RestoredPlaylistSpec(name = name, trackIds = matchedIds.distinct()))
         }
 
+        val collectionsArr = root.optJSONArray("collections") ?: JSONArray()
+        val collections = mutableListOf<RestoredCollectionSpec>()
+        for (i in 0 until collectionsArr.length()) {
+            val colObj = collectionsArr.optJSONObject(i) ?: continue
+            val name = colObj.optString("name").trim()
+            if (name.isEmpty()) continue
+            val desc = colObj.optString("description")
+            val accent = colObj.optString("accentTag", "emerald")
+            val tracksArr = colObj.optJSONArray("tracks") ?: JSONArray()
+            val matchedIds = mutableListOf<Long>()
+            for (j in 0 until tracksArr.length()) {
+                val trackObj = tracksArr.optJSONObject(j) ?: continue
+                val uri = trackObj.optString("uri")
+                val fileName = trackObj.optString("fileName").lowercase()
+                val match = uriMap[uri] ?: fileMap[fileName]
+                if (match != null) matchedIds.add(match.id)
+            }
+            collections.add(
+                RestoredCollectionSpec(
+                    name = name,
+                    description = desc,
+                    accentTag = accent,
+                    trackIds = matchedIds.distinct()
+                )
+            )
+        }
+
+        val metaArr = root.optJSONArray("trackMetadata") ?: JSONArray()
+        val trackMetaList = mutableListOf<RestoredTrackMetadataSpec>()
+        for (i in 0 until metaArr.length()) {
+            val mObj = metaArr.optJSONObject(i) ?: continue
+            val uri = mObj.optString("uri")
+            val fileName = mObj.optString("fileName").lowercase()
+            val match = uriMap[uri] ?: fileMap[fileName] ?: continue
+            trackMetaList.add(
+                RestoredTrackMetadataSpec(
+                    mediaId = match.id,
+                    title = mObj.optString("title", match.title),
+                    artist = mObj.optString("artist", match.artist),
+                    album = mObj.optString("album", match.album),
+                    genre = mObj.optString("genre", match.genre),
+                    releaseYear = mObj.optInt("releaseYear", match.releaseYear),
+                    trackNumber = mObj.optInt("trackNumber", match.trackNumber),
+                    isFavorite = mObj.optBoolean("isFavorite", match.isFavorite),
+                    lyricsRaw = mObj.optString("lyricsRaw").takeIf { it.isNotBlank() },
+                    lyricsOffsetMs = mObj.optLong("lyricsOffsetMs", 0L)
+                )
+            )
+        }
+
         return ParsedBackupPayload(
             settings = restoredSettings,
-            playlists = playlists
+            playlists = playlists,
+            collections = collections,
+            trackMetadata = trackMetaList
         )
     }
 
@@ -147,6 +253,13 @@ object BackupManager {
             put("lyricsFontScale", s.lyricsFontScale.toDouble())
             put("lyricsCentered", s.lyricsCentered)
             put("customAudioPresetsJson", s.customAudioPresetsJson)
+            put("appLanguage", s.appLanguage.name)
+            put("pitchSemitones", s.pitchSemitones.toDouble())
+            put("shakeToSkipEnabled", s.shakeToSkipEnabled)
+            put("queueRadioEnabled", s.queueRadioEnabled)
+            put("autoPauseOnDisconnect", s.autoPauseOnDisconnect)
+            put("autoResumeOnBluetooth", s.autoResumeOnBluetooth)
+            put("headsetButtonDoubleTapSkip", s.headsetButtonDoubleTapSkip)
         }
     }
 
@@ -199,7 +312,14 @@ object BackupManager {
             lyricsFontScale = obj.optDouble("lyricsFontScale", 1.0).toFloat().coerceIn(0.8f, 1.5f),
             lyricsCentered = obj.optBoolean("lyricsCentered", true),
             customAudioPresetsJson = obj.optString("customAudioPresetsJson", "[]"),
-            hasSeenWelcomeIntro = true
+            hasSeenWelcomeIntro = true,
+            appLanguage = enumOrDefault(obj.optString("appLanguage"), AppLanguage.PT),
+            pitchSemitones = obj.optDouble("pitchSemitones", 0.0).toFloat().coerceIn(-6f, 6f),
+            shakeToSkipEnabled = obj.optBoolean("shakeToSkipEnabled", false),
+            queueRadioEnabled = obj.optBoolean("queueRadioEnabled", false),
+            autoPauseOnDisconnect = obj.optBoolean("autoPauseOnDisconnect", true),
+            autoResumeOnBluetooth = obj.optBoolean("autoResumeOnBluetooth", false),
+            headsetButtonDoubleTapSkip = obj.optBoolean("headsetButtonDoubleTapSkip", true)
         )
     }
 
@@ -213,7 +333,29 @@ data class RestoredPlaylistSpec(
     val trackIds: List<Long>
 )
 
+data class RestoredCollectionSpec(
+    val name: String,
+    val description: String,
+    val accentTag: String,
+    val trackIds: List<Long>
+)
+
+data class RestoredTrackMetadataSpec(
+    val mediaId: Long,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val genre: String,
+    val releaseYear: Int,
+    val trackNumber: Int,
+    val isFavorite: Boolean,
+    val lyricsRaw: String?,
+    val lyricsOffsetMs: Long
+)
+
 data class ParsedBackupPayload(
     val settings: AppSettings?,
-    val playlists: List<RestoredPlaylistSpec>
+    val playlists: List<RestoredPlaylistSpec>,
+    val collections: List<RestoredCollectionSpec> = emptyList(),
+    val trackMetadata: List<RestoredTrackMetadataSpec> = emptyList()
 )

@@ -3,7 +3,7 @@ package com.example.config
 object AppConfig {
     const val APP_NAME = "Luma Player"
     const val APP_SHORT_NAME = "Luma"
-    const val APP_VERSION = "3.0.0"
+    const val APP_VERSION = "4.0.0"
     const val NOTIFICATION_CHANNEL_ID = "luma_playback_channel"
     const val NOTIFICATION_ID = 1001
 

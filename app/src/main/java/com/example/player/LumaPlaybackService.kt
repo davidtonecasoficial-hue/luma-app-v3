@@ -26,12 +26,15 @@ import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
+import com.example.LumaApplication
 import com.example.MainActivity
 import com.example.R
 import com.example.config.AppConfig
+import com.example.config.LumaCrashGuard
 import com.example.data.local.LumaDatabase
 import com.example.data.local.SettingsRepository
 import com.example.data.media.ArtistNormalizer
+import com.example.data.media.LumaIntelligenceEngine
 import com.example.data.model.MediaItemEntity
 import com.example.data.model.MediaType
 import com.example.widget.LumaMusicWidgetProvider
@@ -51,7 +54,16 @@ class LumaPlaybackService : MediaLibraryService() {
 
     private var mediaLibrarySession: MediaLibrarySession? = null
     private lateinit var player: ExoPlayer
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + LumaCrashGuard.coroutineExceptionHandler)
+
+    @Volatile
+    private var isServiceDestroyed = false
+
+    private fun appDatabase(): LumaDatabase =
+        (application as? LumaApplication)?.database ?: LumaDatabase.getInstance(applicationContext)
+
+    private fun appSettingsRepository(): SettingsRepository =
+        (application as? LumaApplication)?.settingsRepository ?: SettingsRepository(applicationContext)
 
     companion object {
         @Volatile
@@ -67,6 +79,8 @@ class LumaPlaybackService : MediaLibraryService() {
         private const val NODE_ARTISTS = "luma_artists"
         private const val NODE_ALBUMS = "luma_albums"
         private const val NODE_PLAYLISTS = "luma_playlists"
+        private const val NODE_COLLECTIONS = "luma_collections"
+        private const val NODE_AUTO_DJ = "luma_autodj"
     }
 
     @OptIn(UnstableApi::class)
@@ -146,25 +160,28 @@ class LumaPlaybackService : MediaLibraryService() {
 
     @OptIn(UnstableApi::class)
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            LumaMusicWidgetProvider.ACTION_WIDGET_PLAY_PAUSE -> {
-                if (player.isPlaying) {
-                    player.pause()
-                } else {
-                    if (player.mediaItemCount > 0) {
-                        if (player.playbackState == Player.STATE_IDLE) player.prepare()
-                        player.play()
+        runCatching {
+            if (!::player.isInitialized || isServiceDestroyed) return@runCatching
+            when (intent?.action) {
+                LumaMusicWidgetProvider.ACTION_WIDGET_PLAY_PAUSE -> {
+                    if (player.isPlaying) {
+                        player.pause()
                     } else {
-                        resumeFromLastQueue()
+                        if (player.mediaItemCount > 0) {
+                            if (player.playbackState == Player.STATE_IDLE) player.prepare()
+                            player.play()
+                        } else {
+                            resumeFromLastQueue()
+                        }
                     }
                 }
-            }
-            LumaMusicWidgetProvider.ACTION_WIDGET_NEXT -> {
-                if (player.hasNextMediaItem()) player.seekToNextMediaItem()
-            }
-            LumaMusicWidgetProvider.ACTION_WIDGET_PREVIOUS -> {
-                if (player.currentPosition > 3000L) player.seekTo(0L)
-                else if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem()
+                LumaMusicWidgetProvider.ACTION_WIDGET_NEXT -> {
+                    if (player.hasNextMediaItem()) player.seekToNextMediaItem()
+                }
+                LumaMusicWidgetProvider.ACTION_WIDGET_PREVIOUS -> {
+                    if (player.currentPosition > 3000L) player.seekTo(0L)
+                    else if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem()
+                }
             }
         }
         return super.onStartCommand(intent, flags, startId)
@@ -173,18 +190,21 @@ class LumaPlaybackService : MediaLibraryService() {
     private fun resumeFromLastQueue() {
         serviceScope.launch {
             runCatching {
-                val db = LumaDatabase.getInstance(applicationContext)
-                val settings = SettingsRepository(applicationContext).settingsFlow.first()
+                val db = appDatabase()
+                val settings = appSettingsRepository().settingsFlow.first()
                 val queueRefs = db.queueDao().getQueueOnce()
                 val items = queueRefs.mapNotNull { db.mediaDao().getById(it.mediaId) }
-                    .ifEmpty { db.mediaDao().getAllOnce().filter { it.mediaType == MediaType.AUDIO }.take(25) }
+                    .ifEmpty { db.mediaDao().getAllOnce().filter { it.mediaType == MediaType.AUDIO && it.isAvailable }.take(25) }
                 if (items.isEmpty()) return@launch
                 val startIdx = items.indexOfFirst { it.id == settings.lastMediaId }.coerceAtLeast(0)
                 val mediaItems = items.map { entityToMediaItem(it) }
                 launch(Dispatchers.Main) {
-                    player.setMediaItems(mediaItems, startIdx, settings.lastPositionMs.coerceAtLeast(0L))
-                    player.prepare()
-                    player.play()
+                    if (isServiceDestroyed || !::player.isInitialized) return@launch
+                    runCatching {
+                        player.setMediaItems(mediaItems, startIdx, settings.lastPositionMs.coerceAtLeast(0L))
+                        player.prepare()
+                        player.play()
+                    }
                 }
             }
         }
@@ -192,34 +212,41 @@ class LumaPlaybackService : MediaLibraryService() {
 
     @OptIn(UnstableApi::class)
     private fun syncNotificationAndWidget() {
-        val current = player.currentMediaItem
+        if (isServiceDestroyed || !::player.isInitialized) return
+        val current = runCatching { player.currentMediaItem }.getOrNull()
         val meta = current?.mediaMetadata
         val title = meta?.title?.toString().orEmpty().ifBlank { "Luma Player" }
         val artist = meta?.artist?.toString().orEmpty().ifBlank { "Toque para abrir a sua música" }
-        val isPlaying = player.isPlaying
+        val isPlaying = runCatching { player.isPlaying }.getOrDefault(false)
         val mediaIdLong = current?.mediaId?.toLongOrNull() ?: -1L
 
         serviceScope.launch {
-            val entity = if (mediaIdLong > 0L) {
-                LumaDatabase.getInstance(applicationContext).mediaDao().getById(mediaIdLong)
-            } else null
+            runCatching {
+                val entity = if (mediaIdLong > 0L) {
+                    appDatabase().mediaDao().getById(mediaIdLong)
+                } else null
 
-            LumaMusicWidgetProvider.saveAndUpdateWidgetState(
-                context = applicationContext,
-                title = entity?.title ?: title,
-                artist = entity?.artist ?: artist,
-                isPlaying = isPlaying,
-                artworkPath = entity?.artworkPath
-            )
+                LumaMusicWidgetProvider.saveAndUpdateWidgetState(
+                    context = applicationContext,
+                    title = entity?.title ?: title,
+                    artist = entity?.artist ?: artist,
+                    isPlaying = isPlaying,
+                    artworkPath = entity?.artworkPath
+                )
 
-            val isFav = entity?.isFavorite == true
-            val favButton = CommandButton.Builder()
-                .setDisplayName(if (isFav) "Remover favorito" else "Favorito")
-                .setIconResId(if (isFav) android.R.drawable.btn_star_big_on else android.R.drawable.btn_star_big_off)
-                .setSessionCommand(SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY))
-                .build()
-            launch(Dispatchers.Main) {
-                mediaLibrarySession?.setCustomLayout(ImmutableList.of(favButton))
+                val isFav = entity?.isFavorite == true
+                val favButton = CommandButton.Builder()
+                    .setDisplayName(if (isFav) "Remover favorito" else "Favorito")
+                    .setIconResId(if (isFav) android.R.drawable.btn_star_big_on else android.R.drawable.btn_star_big_off)
+                    .setSessionCommand(SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY))
+                    .build()
+                launch(Dispatchers.Main) {
+                    if (!isServiceDestroyed) {
+                        runCatching {
+                            mediaLibrarySession?.setCustomLayout(ImmutableList.of(favButton))
+                        }
+                    }
+                }
             }
         }
     }
@@ -236,10 +263,11 @@ class LumaPlaybackService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
+        isServiceDestroyed = true
         AudioPipelineBus.resetSpectrum()
         mediaLibrarySession?.run {
-            player.release()
-            release()
+            runCatching { player.release() }
+            runCatching { release() }
             mediaLibrarySession = null
         }
         serviceScope.cancel()
@@ -265,12 +293,15 @@ class LumaPlaybackService : MediaLibraryService() {
 
     private fun entityToMediaItem(entity: MediaItemEntity): MediaItem {
         val artUri = entity.artworkPath?.takeIf { it.isNotBlank() }?.let { path ->
-            if (path.startsWith("content://") || path.startsWith("file://")) Uri.parse(path)
-            else Uri.fromFile(File(path))
+            runCatching {
+                if (path.startsWith("content://") || path.startsWith("file://")) Uri.parse(path)
+                else Uri.fromFile(File(path))
+            }.getOrNull()
         }
+        val mediaUri = runCatching { Uri.parse(entity.uri) }.getOrNull() ?: Uri.EMPTY
         return MediaItem.Builder()
             .setMediaId(entity.id.toString())
-            .setUri(entity.uri)
+            .setUri(mediaUri)
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(entity.title)
@@ -323,22 +354,28 @@ class LumaPlaybackService : MediaLibraryService() {
         ): ListenableFuture<SessionResult> {
             when (customCommand.customAction) {
                 ACTION_TOGGLE_FAVORITE -> {
-                    val id = player.currentMediaItem?.mediaId?.toLongOrNull() ?: -1L
+                    val id = if (!isServiceDestroyed && ::player.isInitialized) {
+                        player.currentMediaItem?.mediaId?.toLongOrNull() ?: -1L
+                    } else -1L
                     if (id > 0L) {
                         serviceScope.launch {
-                            val dao = LumaDatabase.getInstance(applicationContext).mediaDao()
-                            val item = dao.getById(id)
-                            if (item != null) {
-                                dao.setFavorite(id, !item.isFavorite)
-                                syncNotificationAndWidget()
+                            runCatching {
+                                val dao = appDatabase().mediaDao()
+                                val item = dao.getById(id)
+                                if (item != null) {
+                                    dao.setFavorite(id, !item.isFavorite)
+                                    syncNotificationAndWidget()
+                                }
                             }
                         }
                     }
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
                 ACTION_SET_GAPLESS -> {
-                    val enabled = args.getBoolean(EXTRA_GAPLESS_ENABLED, true)
-                    player.pauseAtEndOfMediaItems = !enabled
+                    if (!isServiceDestroyed && ::player.isInitialized) {
+                        val enabled = args.getBoolean(EXTRA_GAPLESS_ENABLED, true)
+                        player.pauseAtEndOfMediaItems = !enabled
+                    }
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
             }
@@ -365,18 +402,27 @@ class LumaPlaybackService : MediaLibraryService() {
             val future = SettableFuture.create<LibraryResult<ImmutableList<MediaItem>>>()
             serviceScope.launch {
                 try {
-                    val db = LumaDatabase.getInstance(applicationContext)
+                    val db = appDatabase()
                     val audio = db.mediaDao().getAllOnce().filter { it.mediaType == MediaType.AUDIO && it.isAvailable }
                     val items: List<MediaItem> = when {
                         parentId == ROOT_ID -> listOf(
                             folderMediaItem(NODE_SONGS, "Músicas", "${audio.size} faixas"),
+                            folderMediaItem(NODE_AUTO_DJ, "Auto DJ Luma", "Sequência inteligente"),
                             folderMediaItem(NODE_FAVORITES, "Favoritos"),
+                            folderMediaItem(NODE_COLLECTIONS, "Coleções"),
                             folderMediaItem(NODE_ARTISTS, "Artistas"),
                             folderMediaItem(NODE_ALBUMS, "Álbuns"),
                             folderMediaItem(NODE_PLAYLISTS, "Playlists")
                         )
                         parentId == NODE_SONGS -> audio.sortedBy { it.title.lowercase() }.map { entityToMediaItem(it) }
+                        parentId == NODE_AUTO_DJ -> LumaIntelligenceEngine.buildAutoDjMix(null, audio, limit = 25).map { entityToMediaItem(it) }
                         parentId == NODE_FAVORITES -> audio.filter { it.isFavorite }.map { entityToMediaItem(it) }
+                        parentId == NODE_COLLECTIONS -> {
+                            val cols = db.customCollectionDao().observeCollectionsWithTracks().first()
+                            cols.map { col ->
+                                folderMediaItem("collection:${col.collection.id}", col.collection.name, "${col.tracks.size} músicas")
+                            }
+                        }
                         parentId == NODE_ARTISTS -> audio
                             .groupBy { ArtistNormalizer.artistGroupingKey(it.artist, it.fileName) }
                             .entries
@@ -401,6 +447,12 @@ class LumaPlaybackService : MediaLibraryService() {
                                 folderMediaItem("playlist:${pl.playlist.id}", pl.playlist.name, "${pl.tracks.size} músicas")
                             }
                         }
+                        parentId.startsWith("collection:") -> {
+                            val colId = parentId.removePrefix("collection:").toLongOrNull() ?: -1L
+                            val col = db.customCollectionDao().observeCollectionsWithTracks().first()
+                                .firstOrNull { it.collection.id == colId }
+                            col?.tracks?.map { entityToMediaItem(it) }.orEmpty()
+                        }
                         parentId.startsWith("artist:") -> {
                             val key = parentId.removePrefix("artist:")
                             audio.filter { ArtistNormalizer.artistGroupingKey(it.artist, it.fileName) == key }
@@ -419,8 +471,10 @@ class LumaPlaybackService : MediaLibraryService() {
                         }
                         else -> emptyList()
                     }
-                    val from = (page * pageSize).coerceAtMost(items.size)
-                    val to = ((page + 1) * pageSize).coerceAtMost(items.size)
+                    val safePage = page.coerceAtLeast(0)
+                    val safePageSize = pageSize.coerceIn(1, 500)
+                    val from = (safePage.toLong() * safePageSize).coerceAtMost(items.size.toLong()).toInt()
+                    val to = ((safePage.toLong() + 1L) * safePageSize).coerceAtMost(items.size.toLong()).toInt()
                     future.set(LibraryResult.ofItemList(ImmutableList.copyOf(items.subList(from, to)), params))
                 } catch (_: Throwable) {
                     future.set(LibraryResult.ofItemList(ImmutableList.of(), params))
@@ -436,11 +490,15 @@ class LumaPlaybackService : MediaLibraryService() {
         ): ListenableFuture<LibraryResult<MediaItem>> {
             val future = SettableFuture.create<LibraryResult<MediaItem>>()
             serviceScope.launch {
-                val idLong = mediaId.toLongOrNull()
-                val item = if (idLong != null) LumaDatabase.getInstance(applicationContext).mediaDao().getById(idLong) else null
-                if (item != null) {
-                    future.set(LibraryResult.ofItem(entityToMediaItem(item), null))
-                } else {
+                try {
+                    val idLong = mediaId.toLongOrNull()
+                    val item = if (idLong != null) appDatabase().mediaDao().getById(idLong) else null
+                    if (item != null) {
+                        future.set(LibraryResult.ofItem(entityToMediaItem(item), null))
+                    } else {
+                        future.set(LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE))
+                    }
+                } catch (_: Throwable) {
                     future.set(LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE))
                 }
             }
@@ -454,13 +512,17 @@ class LumaPlaybackService : MediaLibraryService() {
             params: LibraryParams?
         ): ListenableFuture<LibraryResult<Void>> {
             serviceScope.launch {
-                val q = query.trim().lowercase()
-                val audio = LumaDatabase.getInstance(applicationContext).mediaDao().getAllOnce()
-                    .filter { it.mediaType == MediaType.AUDIO && it.isAvailable }
-                val count = audio.count {
-                    it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) || it.album.lowercase().contains(q)
+                runCatching {
+                    val q = query.trim().lowercase()
+                    val audio = appDatabase().mediaDao().getAllOnce()
+                        .filter { it.mediaType == MediaType.AUDIO && it.isAvailable }
+                    val count = audio.count {
+                        it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) || it.album.lowercase().contains(q)
+                    }
+                    if (!isServiceDestroyed) {
+                        session.notifySearchResultChanged(browser, query, count, params)
+                    }
                 }
-                session.notifySearchResultChanged(browser, query, count, params)
             }
             return Futures.immediateFuture(LibraryResult.ofVoid(params))
         }
@@ -475,15 +537,21 @@ class LumaPlaybackService : MediaLibraryService() {
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
             val future = SettableFuture.create<LibraryResult<ImmutableList<MediaItem>>>()
             serviceScope.launch {
-                val q = query.trim().lowercase()
-                val audio = LumaDatabase.getInstance(applicationContext).mediaDao().getAllOnce()
-                    .filter { it.mediaType == MediaType.AUDIO && it.isAvailable }
-                val matches = audio.filter {
-                    it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) || it.album.lowercase().contains(q)
-                }.map { entityToMediaItem(it) }
-                val from = (page * pageSize).coerceAtMost(matches.size)
-                val to = ((page + 1) * pageSize).coerceAtMost(matches.size)
-                future.set(LibraryResult.ofItemList(ImmutableList.copyOf(matches.subList(from, to)), params))
+                try {
+                    val q = query.trim().lowercase()
+                    val audio = appDatabase().mediaDao().getAllOnce()
+                        .filter { it.mediaType == MediaType.AUDIO && it.isAvailable }
+                    val matches = audio.filter {
+                        it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) || it.album.lowercase().contains(q)
+                    }.map { entityToMediaItem(it) }
+                    val safePage = page.coerceAtLeast(0)
+                    val safePageSize = pageSize.coerceIn(1, 500)
+                    val from = (safePage.toLong() * safePageSize).coerceAtMost(matches.size.toLong()).toInt()
+                    val to = ((safePage.toLong() + 1L) * safePageSize).coerceAtMost(matches.size.toLong()).toInt()
+                    future.set(LibraryResult.ofItemList(ImmutableList.copyOf(matches.subList(from, to)), params))
+                } catch (_: Throwable) {
+                    future.set(LibraryResult.ofItemList(ImmutableList.of(), params))
+                }
             }
             return future
         }
@@ -495,8 +563,8 @@ class LumaPlaybackService : MediaLibraryService() {
             val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
             serviceScope.launch {
                 try {
-                    val db = LumaDatabase.getInstance(applicationContext)
-                    val settings = SettingsRepository(applicationContext).settingsFlow.first()
+                    val db = appDatabase()
+                    val settings = appSettingsRepository().settingsFlow.first()
                     val queueRefs = db.queueDao().getQueueOnce()
                     val items = queueRefs.mapNotNull { ref -> db.mediaDao().getById(ref.mediaId) }
                     if (items.isEmpty()) {
@@ -526,21 +594,25 @@ class LumaPlaybackService : MediaLibraryService() {
         ): ListenableFuture<MutableList<MediaItem>> {
             val future = SettableFuture.create<MutableList<MediaItem>>()
             serviceScope.launch {
-                val db = LumaDatabase.getInstance(applicationContext)
-                val updated = mediaItems.map { item ->
-                    if (item.localConfiguration != null) {
-                        item
-                    } else {
-                        val idLong = item.mediaId.toLongOrNull()
-                        val fromDb = if (idLong != null) db.mediaDao().getById(idLong) else null
-                        when {
-                            fromDb != null -> entityToMediaItem(fromDb)
-                            item.requestMetadata.mediaUri != null -> item.buildUpon().setUri(item.requestMetadata.mediaUri).build()
-                            else -> item
+                try {
+                    val db = appDatabase()
+                    val updated = mediaItems.map { item ->
+                        if (item.localConfiguration != null) {
+                            item
+                        } else {
+                            val idLong = item.mediaId.toLongOrNull()
+                            val fromDb = if (idLong != null) db.mediaDao().getById(idLong) else null
+                            when {
+                                fromDb != null -> entityToMediaItem(fromDb)
+                                item.requestMetadata.mediaUri != null -> item.buildUpon().setUri(item.requestMetadata.mediaUri).build()
+                                else -> item
+                            }
                         }
-                    }
-                }.toMutableList()
-                future.set(updated)
+                    }.toMutableList()
+                    future.set(updated)
+                } catch (_: Throwable) {
+                    future.set(mediaItems)
+                }
             }
             return future
         }

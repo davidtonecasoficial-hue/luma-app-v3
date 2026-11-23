@@ -569,6 +569,7 @@ fun AboutScreen(
 ) {
     BackHandler { onBack() }
     val glass = LocalLumaGlass.current
+    val strings = com.example.ui.theme.LocalLumaStrings.current
 
     LazyColumn(
         modifier = Modifier
@@ -588,7 +589,7 @@ fun AboutScreen(
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Voltar")
                 }
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Sobre", style = MaterialTheme.typography.headlineMedium)
+                Text(strings.aboutTitle, style = MaterialTheme.typography.headlineMedium)
             }
         }
 
@@ -616,13 +617,13 @@ fun AboutScreen(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Versão ${AppConfig.APP_VERSION}",
+                        text = "${strings.aboutVersionPrefix} ${AppConfig.APP_VERSION}",
                         style = MaterialTheme.typography.labelLarge,
                         color = glass.accentPrimary
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Leitor multimédia local e elegante para reprodução fluida de música e vídeo em Android.",
+                        text = "Feito para transformar a sua biblioteca de música e vídeo numa experiência leve, envolvente e sem complicações.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -638,19 +639,19 @@ fun AboutScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Programador e Desenvolvimento",
+                        text = strings.aboutDeveloperCardTitle,
                         style = MaterialTheme.typography.titleMedium,
                         color = glass.accentPrimary
                     )
-                    AboutInfoRow("Desenvolvimento", "Desenvolvimento Android Nativo")
-                    AboutInfoRow("Plataforma", "Android 10+ (Kotlin, Jetpack Compose, Material 3)")
-                    AboutInfoRow("Arquitetura", "MVVM + Repository + Room + DataStore + Media3")
-                    AboutInfoRow("Pacote", "com.aistudio.lumaplayer.vxmkrp")
+                    AboutInfoRow("Autor & Créditos", strings.aboutDeveloperCredit)
+                    AboutInfoRow("Tecnologia", "Android Nativo (Kotlin, Jetpack Compose, Media3)")
+                    AboutInfoRow("Armazenamento & Preferências", "Room Database + DataStore")
+                    AboutInfoRow("Versão Atual", AppConfig.APP_VERSION)
                 }
             }
         }
 
-        // Privacidade e Armazenamento Local
+        // Privacidade e Letras
         item {
             LiquidGlassSurface(shape = RoundedCornerShape(22.dp)) {
                 Column(
@@ -658,17 +659,17 @@ fun AboutScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Privacidade e Funcionamento Offline",
+                        text = "Privacidade e Controlo",
                         style = MaterialTheme.typography.titleMedium,
                         color = glass.accentPrimary
                     )
                     Text(
-                        text = "Esta aplicação funciona 100% offline. As suas músicas, vídeos, metadados, playlists, letras e histórico permanecem exclusivamente no dispositivo. Nenhum ficheiro ou dado pessoal é enviado para servidores externos.",
+                        text = "As suas músicas, vídeos, listas de reprodução e ajustes ficam guardados com segurança no seu dispositivo. A ligação à internet é usada apenas quando opta por pesquisar letras de músicas online.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "O acesso à biblioteca utiliza a Android MediaStore API (permissões READ_MEDIA_AUDIO e READ_MEDIA_VIDEO) para varredura automática local e o seletor seguro do sistema (Storage Access Framework) para importação manual.",
+                        text = "Para organizar a sua coleção automaticamente, o Luma utiliza apenas as permissões essenciais de áudio e vídeo do sistema.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -684,7 +685,7 @@ fun AboutScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Bibliotecas e Licenças",
+                        text = strings.aboutLibrariesTitle,
                         style = MaterialTheme.typography.titleMedium,
                         color = glass.accentPrimary
                     )

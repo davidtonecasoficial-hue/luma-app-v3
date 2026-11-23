@@ -38,6 +38,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,6 +75,7 @@ fun InsightsScreen(
 ) {
     BackHandler(onBack = onBack)
     val glass = LocalLumaGlass.current
+    var showYearlyWrapped by remember { mutableStateOf(true) }
 
     Column(
         modifier = Modifier
@@ -97,12 +102,12 @@ fun InsightsScreen(
             Spacer(modifier = Modifier.width(6.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Luma Insights",
+                    text = "Luma Insights 4.0",
                     style = MaterialTheme.typography.headlineMedium,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = "Estatísticas locais e Luma Wrapped",
+                    text = "Estatísticas locais, comparações e Luma Wrapped",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -119,7 +124,7 @@ fun InsightsScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Luma Wrapped Hero Card
+            // Luma Wrapped Hero Card (Monthly / Yearly Switcher)
             item {
                 LumaSectionEntrance(index = 0) {
                     LiquidGlassSurface(
@@ -150,47 +155,55 @@ fun InsightsScreen(
                                         modifier = Modifier.size(18.dp)
                                     )
                                     Text(
-                                        text = "LUMA WRAPPED",
+                                        text = if (showYearlyWrapped) "WRAPPED ANUAL" else "WRAPPED MENSAL",
                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                         color = glass.accentPrimary
                                     )
                                 }
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .background(glass.pillIndicatorBg)
-                                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        text = report.wrappedMoodTag,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = glass.accentPrimary
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    WrappedPeriodChip(
+                                        label = "Anual",
+                                        selected = showYearlyWrapped,
+                                        onClick = { showYearlyWrapped = true },
+                                        tag = "insights_wrapped_yearly"
+                                    )
+                                    WrappedPeriodChip(
+                                        label = "Mensal",
+                                        selected = !showYearlyWrapped,
+                                        onClick = { showYearlyWrapped = false },
+                                        tag = "insights_wrapped_monthly"
                                     )
                                 }
                             }
 
                             Text(
-                                text = report.wrappedHeadline,
+                                text = if (showYearlyWrapped) {
+                                    report.wrappedHeadline
+                                } else {
+                                    report.monthlyWrappedHeadline.ifBlank { report.wrappedHeadline }
+                                },
                                 style = MaterialTheme.typography.titleLarge,
                                 color = glass.textPrimary
                             )
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Pico de audição: ${report.peakListeningPeriod}",
+                                    text = "Pico: ${report.peakListeningPeriod}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = glass.textSecondary
                                 )
+                                Text("•", color = glass.textSecondary)
                                 Text(
-                                    text = "•",
-                                    color = glass.textSecondary
-                                )
-                                Text(
-                                    text = "Total: ${formatDuration(report.totalListeningTimeMs)}",
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    text = if (showYearlyWrapped) {
+                                        "${report.annualTotalPlays} plays • ${report.annualMinutes} min"
+                                    } else {
+                                        "${report.monthlyTotalPlays} plays • ${report.monthlyMinutes} min"
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                     color = glass.accentSecondary
                                 )
                             }
@@ -235,6 +248,67 @@ fun InsightsScreen(
                                 label = "Artistas ouvidos",
                                 value = "${report.uniqueArtistsHeard}",
                                 modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Listening History Comparison Card (This Month vs Last Month, This Week vs Last Week)
+            item {
+                val cmp = report.comparison
+                LiquidGlassSurface(
+                    shape = RoundedCornerShape(22.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("insights_comparison_card")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Comparação de Histórico",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = glass.textPrimary
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            ComparisonDeltaTile(
+                                title = "Este Mês vs Anterior",
+                                currentLabel = "${cmp.thisMonthPlays} plays • ${cmp.thisMonthMinutes} min",
+                                previousLabel = "Anterior: ${cmp.lastMonthPlays} plays",
+                                deltaPercent = cmp.monthDeltaPercent,
+                                modifier = Modifier.weight(1f)
+                            )
+                            ComparisonDeltaTile(
+                                title = "Esta Semana vs Ant.",
+                                currentLabel = "${cmp.thisWeekPlays} plays • ${cmp.thisWeekMinutes} min",
+                                previousLabel = "Anterior: ${cmp.lastWeekPlays} plays",
+                                deltaPercent = cmp.weekDeltaPercent,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Conclusão: ${cmp.completionRatePercent}%",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = glass.accentPrimary
+                            )
+                            Text(
+                                text = "Salto cedo: ${cmp.earlySkipRatePercent}%",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = glass.textSecondary
+                            )
+                            Text(
+                                text = "Rota: ${cmp.topOutputRoute}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = glass.accentSecondary
                             )
                         }
                     }
@@ -620,5 +694,66 @@ private fun RankedStatSection(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun WrappedPeriodChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    tag: String
+) {
+    val glass = LocalLumaGlass.current
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) glass.accentPrimary else glass.glassSurface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 5.dp)
+            .testTag(tag)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+            color = if (selected) glass.onAccent else glass.textSecondary
+        )
+    }
+}
+
+@Composable
+private fun ComparisonDeltaTile(
+    title: String,
+    currentLabel: String,
+    previousLabel: String,
+    deltaPercent: Int,
+    modifier: Modifier = Modifier
+) {
+    val glass = LocalLumaGlass.current
+    val deltaText = when {
+        deltaPercent > 0 -> "+$deltaPercent%"
+        else -> "$deltaPercent%"
+    }
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(glass.glassSurface)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(title, style = MaterialTheme.typography.labelSmall, color = glass.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = deltaText,
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = if (deltaPercent >= 0) glass.accentPrimary else glass.error
+            )
+        }
+        Text(currentLabel, style = MaterialTheme.typography.labelLarge, color = glass.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(previousLabel, style = MaterialTheme.typography.bodySmall, color = glass.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

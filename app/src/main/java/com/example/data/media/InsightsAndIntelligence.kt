@@ -1,23 +1,29 @@
 package com.example.data.media
 
+import androidx.compose.runtime.Immutable
 import com.example.data.model.HistoryWithMedia
+import com.example.data.model.ListeningSessionEntity
 import com.example.data.model.MediaItemEntity
 import com.example.data.model.MediaType
 import java.util.Calendar
 import java.util.Locale
+import kotlin.math.roundToInt
 
+@Immutable
 data class DayListeningStat(
     val dayLabel: String,
     val plays: Int,
     val estimatedMinutes: Int
 )
 
+@Immutable
 data class WeekListeningStat(
     val weekLabel: String,
     val plays: Int,
     val estimatedMinutes: Int
 )
 
+@Immutable
 data class RankedStat(
     val label: String,
     val subtitle: String,
@@ -26,6 +32,24 @@ data class RankedStat(
     val artworkPath: String? = null
 )
 
+@Immutable
+data class ListeningComparisonStats(
+    val thisMonthPlays: Int = 0,
+    val lastMonthPlays: Int = 0,
+    val thisMonthMinutes: Int = 0,
+    val lastMonthMinutes: Int = 0,
+    val monthDeltaPercent: Int = 0,
+    val thisWeekPlays: Int = 0,
+    val lastWeekPlays: Int = 0,
+    val thisWeekMinutes: Int = 0,
+    val lastWeekMinutes: Int = 0,
+    val weekDeltaPercent: Int = 0,
+    val completionRatePercent: Int = 100,
+    val earlySkipRatePercent: Int = 0,
+    val topOutputRoute: String = "Altifalante"
+)
+
+@Immutable
 data class LumaInsightsReport(
     val totalListeningTimeMs: Long,
     val totalPlays: Int,
@@ -41,7 +65,11 @@ data class LumaInsightsReport(
     val annualMinutes: Int,
     val wrappedHeadline: String,
     val wrappedMoodTag: String,
-    val peakListeningPeriod: String
+    val peakListeningPeriod: String,
+    val comparison: ListeningComparisonStats = ListeningComparisonStats(),
+    val monthlyWrappedHeadline: String = "",
+    val monthlyMinutes: Int = 0,
+    val monthlyTotalPlays: Int = 0
 )
 
 enum class SmartPlaylistRule(val title: String, val subtitle: String) {
@@ -59,7 +87,8 @@ object InsightsCalculator {
         allMedia: List<MediaItemEntity>,
         history: List<HistoryWithMedia>,
         totalListeningTimeMs: Long,
-        nowMs: Long = System.currentTimeMillis()
+        nowMs: Long = System.currentTimeMillis(),
+        sessions: List<ListeningSessionEntity> = emptyList()
     ): LumaInsightsReport {
         val audio = allMedia.filter { it.mediaType == MediaType.AUDIO && it.isAvailable }
         val totalPlays = audio.sumOf { it.playCount }.coerceAtLeast(history.size)
@@ -209,6 +238,67 @@ object InsightsCalculator {
                 "Importa as tuas músicas para desbloquear estatísticas personalizadas."
         }
 
+        val sixtyDaysAgo = nowMs - 60 * dayMillis
+        val fourteenDaysAgo = nowMs - 14 * dayMillis
+        var thisMonthPlays = 0
+        var lastMonthPlays = 0
+        var thisMonthMs = 0L
+        var lastMonthMs = 0L
+        var thisWeekPlays = 0
+        var lastWeekPlays = 0
+        var thisWeekMs = 0L
+        var lastWeekMs = 0L
+
+        for (entry in history) {
+            val playedAt = entry.history.playedAt
+            val dur = entry.media?.durationMs?.takeIf { it > 0L } ?: 190_000L
+            if (playedAt >= thirtyDaysAgo) {
+                thisMonthPlays++
+                thisMonthMs += dur
+            } else if (playedAt >= sixtyDaysAgo) {
+                lastMonthPlays++
+                lastMonthMs += dur
+            }
+            if (playedAt >= sevenDaysAgo) {
+                thisWeekPlays++
+                thisWeekMs += dur
+            } else if (playedAt >= fourteenDaysAgo) {
+                lastWeekPlays++
+                lastWeekMs += dur
+            }
+        }
+
+        val completedCount = sessions.count { it.completedTrack }
+        val earlySkippedCount = sessions.count { it.skippedEarly }
+        val completionRate = if (sessions.isNotEmpty()) {
+            ((completedCount * 100f) / sessions.size.toFloat()).roundToInt().coerceIn(0, 100)
+        } else 100
+        val earlySkipRate = if (sessions.isNotEmpty()) {
+            ((earlySkippedCount * 100f) / sessions.size.toFloat()).roundToInt().coerceIn(0, 100)
+        } else 0
+        val topRoute = sessions
+            .groupBy { it.outputRoute.ifBlank { "Speaker" } }
+            .maxByOrNull { it.value.size }
+            ?.key
+            ?.let { token ->
+                when (token.lowercase(Locale.ROOT)) {
+                    "bluetooth" -> "Bluetooth"
+                    "wired" -> "Auscultadores"
+                    "usb" -> "USB Áudio"
+                    "cast" -> "HDMI / Cast"
+                    else -> "Altifalante"
+                }
+            } ?: "Altifalante"
+
+        val monthDeltaPercent = computeDeltaPercent(thisMonthPlays, lastMonthPlays)
+        val weekDeltaPercent = computeDeltaPercent(thisWeekPlays, lastWeekPlays)
+        val monthlyMinutes = (thisMonthMs / 60_000L).toInt()
+        val monthlyWrappedHeadline = if (thisMonthPlays > 0) {
+            "Este mês ouviste $thisMonthPlays músicas (${monthlyMinutes} min), com pico em $peakPeriod."
+        } else {
+            wrappedHeadline
+        }
+
         val totalMinutes = ((totalListeningTimeMs.coerceAtLeast(annualMs)) / 60_000L).toInt()
         return LumaInsightsReport(
             totalListeningTimeMs = totalListeningTimeMs.coerceAtLeast(annualMs),
@@ -225,8 +315,34 @@ object InsightsCalculator {
             annualMinutes = totalMinutes,
             wrappedHeadline = wrappedHeadline,
             wrappedMoodTag = topGenreName.uppercase(Locale.getDefault()),
-            peakListeningPeriod = peakPeriod
+            peakListeningPeriod = peakPeriod,
+            comparison = ListeningComparisonStats(
+                thisMonthPlays = thisMonthPlays,
+                lastMonthPlays = lastMonthPlays,
+                thisMonthMinutes = monthlyMinutes,
+                lastMonthMinutes = (lastMonthMs / 60_000L).toInt(),
+                monthDeltaPercent = monthDeltaPercent,
+                thisWeekPlays = thisWeekPlays,
+                lastWeekPlays = lastWeekPlays,
+                thisWeekMinutes = (thisWeekMs / 60_000L).toInt(),
+                lastWeekMinutes = (lastWeekMs / 60_000L).toInt(),
+                weekDeltaPercent = weekDeltaPercent,
+                completionRatePercent = completionRate,
+                earlySkipRatePercent = earlySkipRate,
+                topOutputRoute = topRoute
+            ),
+            monthlyWrappedHeadline = monthlyWrappedHeadline,
+            monthlyMinutes = monthlyMinutes,
+            monthlyTotalPlays = thisMonthPlays
         )
+    }
+
+    private fun computeDeltaPercent(current: Int, previous: Int): Int {
+        return when {
+            previous <= 0 && current > 0 -> 100
+            previous <= 0 -> 0
+            else -> (((current - previous).toFloat() / previous.toFloat()) * 100f).roundToInt()
+        }
     }
 }
 
@@ -292,6 +408,43 @@ object SmartPlaylistGenerator {
             if (track.isFavorite) score += 10
             if (track.artworkPath != null) score += 5
             score
+        }.take(limit)
+    }
+
+    /**
+     * Picks compatible upcoming tracks for continuous Queue Radio playback without repeating
+     * tracks currently in the queue.
+     */
+    fun pickRadioContinuation(
+        seed: MediaItemEntity?,
+        currentQueue: List<MediaItemEntity>,
+        library: List<MediaItemEntity>,
+        limit: Int = 5
+    ): List<MediaItemEntity> {
+        val audio = library.filter { it.mediaType == MediaType.AUDIO && it.isAvailable }
+        if (audio.isEmpty()) return emptyList()
+
+        val queuedIds = currentQueue.map { it.id }.toSet()
+        val candidates = audio.filterNot { it.id in queuedIds }.ifEmpty {
+            audio.filter { it.id != seed?.id }
+        }
+        if (candidates.isEmpty()) return emptyList()
+
+        val seedArtistKey = seed?.let { ArtistNormalizer.artistGroupingKey(it.artist, it.fileName) }
+        val seedGenre = seed?.genre?.trim()?.lowercase().orEmpty()
+        val seedAlbum = seed?.album?.trim()?.lowercase().orEmpty()
+
+        return candidates.sortedByDescending { candidate ->
+            var score = 0
+            val candArtistKey = ArtistNormalizer.artistGroupingKey(candidate.artist, candidate.fileName)
+            if (seedArtistKey != null && candArtistKey == seedArtistKey) score += 28
+            if (seedGenre.isNotBlank() && candidate.genre.trim().lowercase() == seedGenre) score += 24
+            if (seedAlbum.isNotBlank() && seedAlbum != "álbum desconhecido" &&
+                candidate.album.trim().lowercase() == seedAlbum
+            ) score += 14
+            if (candidate.isFavorite) score += 8
+            if (candidate.playCount <= 2) score += 6
+            score + (candidate.id % 5).toInt()
         }.take(limit)
     }
 }

@@ -83,6 +83,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -94,11 +95,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.media.LrcParser
 import com.example.data.model.MediaItemEntity
 import com.example.data.model.PlaybackAnimationStyle
 import com.example.data.model.PlayerScreenStyle
 import com.example.data.model.SurfaceMaterial
+import com.example.player.PlaybackProgressUiState
 import com.example.player.PlaybackUiState
 import com.example.player.RepeatModeState
 import com.example.ui.theme.LiquidGlassCapsule
@@ -108,6 +111,7 @@ import com.example.ui.theme.MediaArtwork
 import com.example.ui.theme.SculptedCircleButton
 import com.example.ui.theme.formatDuration
 import com.example.ui.theme.rememberLumaBounceScale
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.sin
@@ -337,9 +341,9 @@ private fun DeckCoverCard(
         SurfaceMaterial.NEUMORPHIC_BW, SurfaceMaterial.NEUMORPHIC_SOFT -> if (isCenter) glass.surfaceElevated else glass.surface
         SurfaceMaterial.AMOLED_CRISP -> if (isCenter) glass.surfaceElevated else glass.surface
         SurfaceMaterial.LIQUID_GLASS -> if (isCenter) {
-            if (glass.isDark) glass.surfaceElevated.copy(alpha = 0.88f) else Color(0xEAFFFFFF)
+            if (glass.isDark) glass.surfaceElevated.copy(alpha = 0.84f) else lerp(Color.White, glass.surfaceElevated, 0.42f).copy(alpha = 0.88f)
         } else {
-            if (glass.isDark) glass.surface.copy(alpha = 0.72f) else Color(0xC2FFFFFF)
+            if (glass.isDark) glass.surface.copy(alpha = 0.70f) else lerp(Color.White, glass.surface, 0.36f).copy(alpha = 0.78f)
         }
     }
     val borderStroke = when {
@@ -350,11 +354,11 @@ private fun DeckCoverCard(
             )
         )
         isCenter -> BorderStroke(
-            width = 1.5.dp,
+            width = 1.6.dp,
             brush = Brush.verticalGradient(
                 listOf(
-                    Color.White.copy(alpha = if (glass.isDark) 0.55f else 0.96f),
-                    glass.accentPrimary.copy(alpha = 0.45f)
+                    Color.White.copy(alpha = if (glass.isDark) 0.58f else 0.96f),
+                    glass.accentPrimary.copy(alpha = if (glass.isDark) 0.58f else 0.42f)
                 )
             )
         )
@@ -426,6 +430,7 @@ private fun DeckCoverCard(
                         artworkPath = track.artworkPath,
                         contentDescription = "Capa de ${track.title}",
                         cornerRadius = 18.dp,
+                        maxDecodeSize = if (isCenter) 360.dp else 220.dp,
                         modifier = Modifier.fillMaxSize()
                     )
 
@@ -834,6 +839,7 @@ fun PosterImmersiveStage(
                 artworkPath = track.artworkPath,
                 contentDescription = "Capa de ${track.title}",
                 cornerRadius = 30.dp,
+                maxDecodeSize = 480.dp,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -929,12 +935,14 @@ fun LyricsStageView(
     lyricsFontScale: Float = 1f,
     lyricsCentered: Boolean = true,
     onOpenFullScreenLyrics: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    progressFlow: StateFlow<PlaybackProgressUiState>? = null
 ) {
     val glass = LocalLumaGlass.current
+    val livePositionMs = progressFlow?.collectAsStateWithLifecycle()?.value?.positionMs ?: positionMs
     val parsed = remember(track.embeddedLyrics) { LrcParser.parse(track.embeddedLyrics) }
-    val activeIdx = remember(parsed, positionMs, lyricsOffsetMs) {
-        if (parsed.isTimed) LrcParser.findActiveLineIndex(parsed.lines, positionMs, lyricsOffsetMs) else -1
+    val activeIdx = remember(parsed, livePositionMs, lyricsOffsetMs) {
+        if (parsed.isTimed) LrcParser.findActiveLineIndex(parsed.lines, livePositionMs, lyricsOffsetMs) else -1
     }
     val listState = rememberLazyListState()
 
@@ -1047,7 +1055,7 @@ fun LyricsStageView(
                         },
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    itemsIndexed(parsed.lines) { idx, line ->
+                    itemsIndexed(parsed.lines, key = { idx, line -> "${idx}_${line.timeMs ?: -1L}" }) { idx, line ->
                         val isCurrent = parsed.isTimed && idx == activeIdx
                         Column(
                             modifier = Modifier

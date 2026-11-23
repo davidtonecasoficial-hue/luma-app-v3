@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -48,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -96,34 +98,35 @@ fun LiquidGlassBackground(
 
     when (glass.surfaceMaterial) {
         SurfaceMaterial.NEUMORPHIC_BW, SurfaceMaterial.NEUMORPHIC_SOFT -> {
-            // Pure matte soft-alabaster/porcelain backdrop with subtle rose-pearl ambient bloom for Soft UI Claro
+            // Pure matte soft-alabaster/porcelain backdrop with cached gradient brushes
             Box(
                 modifier = modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
+                    .drawWithCache {
+                        val verticalGrad = Brush.verticalGradient(
                             colors = listOf(
                                 glass.background,
                                 glass.backgroundSecondary,
                                 glass.background
                             )
                         )
-                    )
-                    .drawBehind {
-                        if (glass.surfaceMaterial == SurfaceMaterial.NEUMORPHIC_SOFT) {
-                            val r = size.maxDimension * 0.56f
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        primaryGlow.copy(alpha = if (glass.isDark) 0.11f else 0.065f),
-                                        Color.Transparent
-                                    ),
-                                    center = Offset(size.width * 0.82f, size.height * 0.14f),
-                                    radius = r
+                        val orbCenter = Offset(size.width * 0.82f, size.height * 0.14f)
+                        val orbRadius = (size.maxDimension * 0.56f).coerceAtLeast(1f)
+                        val softOrb = if (glass.surfaceMaterial == SurfaceMaterial.NEUMORPHIC_SOFT && size.minDimension > 1f) {
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    primaryGlow.copy(alpha = if (glass.isDark) 0.11f else 0.065f),
+                                    Color.Transparent
                                 ),
-                                center = Offset(size.width * 0.82f, size.height * 0.14f),
-                                radius = r
+                                center = orbCenter,
+                                radius = orbRadius
                             )
+                        } else null
+                        onDrawBehind {
+                            drawRect(verticalGrad)
+                            if (softOrb != null) {
+                                drawCircle(brush = softOrb, center = orbCenter, radius = orbRadius)
+                            }
                         }
                     },
                 content = content
@@ -140,18 +143,19 @@ fun LiquidGlassBackground(
         }
 
         SurfaceMaterial.LIQUID_GLASS -> {
+            val baseBgBrush = remember(glass.background, glass.backgroundSecondary) {
+                Brush.verticalGradient(
+                    colors = listOf(
+                        glass.background,
+                        glass.backgroundSecondary,
+                        glass.background
+                    )
+                )
+            }
             Box(
                 modifier = modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                glass.background,
-                                glass.backgroundSecondary,
-                                glass.background
-                            )
-                        )
-                    )
+                    .background(baseBgBrush)
             ) {
                 Crossfade(
                     targetState = glass.isDark,
@@ -179,45 +183,44 @@ fun LiquidGlassBackground(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .drawBehind {
+                        .drawWithCache {
                             val blurScale = glass.backgroundBlurScale
-                            val topOrbRadius = size.maxDimension * (0.65f * blurScale.coerceAtLeast(0.6f))
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        primaryGlow.copy(alpha = (0.24f * blurScale).coerceIn(0.05f, 0.42f)),
-                                        Color.Transparent
-                                    ),
-                                    center = Offset(size.width * 0.18f, size.height * 0.14f),
-                                    radius = topOrbRadius
+                            val topCenter = Offset(size.width * 0.18f, size.height * 0.14f)
+                            val topOrbRadius = (size.maxDimension * (0.65f * blurScale.coerceAtLeast(0.6f))).coerceAtLeast(1f)
+                            val topOrb = Brush.radialGradient(
+                                colors = listOf(
+                                    primaryGlow.copy(alpha = (0.24f * blurScale).coerceIn(0.05f, 0.42f)),
+                                    Color.Transparent
                                 ),
-                                center = Offset(size.width * 0.18f, size.height * 0.14f),
+                                center = topCenter,
                                 radius = topOrbRadius
                             )
 
-                            val bottomOrbRadius = size.maxDimension * (0.62f * blurScale.coerceAtLeast(0.6f))
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        glass.accentSecondary.copy(alpha = (0.20f * blurScale).coerceIn(0.05f, 0.38f)),
-                                        Color.Transparent
-                                    ),
-                                    center = Offset(size.width * 0.85f, size.height * 0.82f),
-                                    radius = bottomOrbRadius
+                            val bottomCenter = Offset(size.width * 0.85f, size.height * 0.82f)
+                            val bottomOrbRadius = (size.maxDimension * (0.62f * blurScale.coerceAtLeast(0.6f))).coerceAtLeast(1f)
+                            val bottomOrb = Brush.radialGradient(
+                                colors = listOf(
+                                    glass.accentSecondary.copy(alpha = (0.20f * blurScale).coerceIn(0.05f, 0.38f)),
+                                    Color.Transparent
                                 ),
-                                center = Offset(size.width * 0.85f, size.height * 0.82f),
+                                center = bottomCenter,
                                 radius = bottomOrbRadius
                             )
-                        }
-                        .background(
-                            Brush.verticalGradient(
+
+                            val vignetteBrush = Brush.verticalGradient(
                                 colors = listOf(
-                                    glass.background.copy(alpha = if (glass.isDark) 0.22f else 0.22f),
+                                    glass.background.copy(alpha = 0.22f),
                                     glass.backgroundSecondary.copy(alpha = if (glass.isDark) 0.48f else 0.38f),
                                     glass.background.copy(alpha = if (glass.isDark) 0.86f else 0.64f)
                                 )
                             )
-                        )
+                            onDrawBehind {
+                                if (size.minDimension <= 1f) return@onDrawBehind
+                                drawCircle(brush = topOrb, center = topCenter, radius = topOrbRadius)
+                                drawCircle(brush = bottomOrb, center = bottomCenter, radius = bottomOrbRadius)
+                                drawRect(vignetteBrush)
+                            }
+                        }
                 )
 
                 content()
@@ -236,42 +239,63 @@ fun LiquidGlassSurface(
     content: @Composable BoxScope.() -> Unit
 ) {
     val glass = LocalLumaGlass.current
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val pressScale by animateFloatAsState(
-        targetValue = if (onClick != null && isPressed && !glass.reduceMotion) 0.968f else 1f,
-        animationSpec = if (glass.reduceMotion) snap() else spring(dampingRatio = 0.54f, stiffness = 560f),
-        label = "surfacePressScale"
-    )
-    val scaleMod = if (onClick != null && !glass.reduceMotion) {
-        Modifier.graphicsLayer {
-            scaleX = pressScale
-            scaleY = pressScale
+    val interactionSource: MutableInteractionSource?
+    val scaleMod: Modifier
+    if (onClick != null) {
+        val src = remember { MutableInteractionSource() }
+        interactionSource = src
+        if (!glass.reduceMotion) {
+            val isPressed by src.collectIsPressedAsState()
+            val pressScale by animateFloatAsState(
+                targetValue = if (isPressed) 0.968f else 1f,
+                animationSpec = spring(dampingRatio = 0.54f, stiffness = 560f),
+                label = "surfacePressScale"
+            )
+            scaleMod = Modifier.graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+        } else {
+            scaleMod = Modifier
         }
-    } else Modifier
+    } else {
+        interactionSource = null
+        scaleMod = Modifier
+    }
 
     when (glass.surfaceMaterial) {
         SurfaceMaterial.NEUMORPHIC_BW, SurfaceMaterial.NEUMORPHIC_SOFT -> {
             val fill = if (elevated) glass.surfaceElevated else glass.surface
             val isSoftRose = glass.surfaceMaterial == SurfaceMaterial.NEUMORPHIC_SOFT
-            val endBevel = if (isSoftRose && elevated && accentGlow != null && !glass.isDark) {
-                lerp(glass.reliefShadowDark.copy(alpha = 0.52f), accentGlow.copy(alpha = 0.28f), 0.24f)
-            } else {
-                glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.85f else 0.55f)
+            val endBevel = remember(isSoftRose, elevated, accentGlow, glass.isDark, glass.reliefShadowDark) {
+                if (isSoftRose && elevated && accentGlow != null && !glass.isDark) {
+                    lerp(glass.reliefShadowDark.copy(alpha = 0.52f), accentGlow.copy(alpha = 0.28f), 0.24f)
+                } else {
+                    glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.85f else 0.55f)
+                }
             }
-            val bevelBrush = Brush.linearGradient(
-                colors = listOf(
-                    glass.reliefShadowLight,
-                    fill,
-                    endBevel
-                ),
-                start = Offset(0f, 0f),
-                end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
-            )
+            val bevelBrush = remember(glass.reliefShadowLight, fill, endBevel) {
+                Brush.linearGradient(
+                    colors = listOf(
+                        glass.reliefShadowLight,
+                        fill,
+                        endBevel
+                    )
+                )
+            }
+            val innerSurfaceBrush = remember(glass.reliefShadowLight, fill, glass.reliefShadowDark, glass.isDark) {
+                Brush.linearGradient(
+                    colors = listOf(
+                        glass.reliefShadowLight.copy(alpha = if (glass.isDark) 0.08f else 0.70f),
+                        fill,
+                        glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.12f else 0.045f)
+                    )
+                )
+            }
             val shadowDp = if (glass.isDark) {
-                if (elevated) 8.dp else 5.dp
+                if (elevated) 7.dp else 3.dp
             } else {
-                if (elevated) 5.dp else 2.5.dp
+                if (elevated) 4.dp else 2.dp
             }
             Surface(
                 modifier = modifier
@@ -279,8 +303,8 @@ fun LiquidGlassSurface(
                     .shadow(
                         elevation = shadowDp,
                         shape = shape,
-                        ambientColor = glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.55f else 0.34f),
-                        spotColor = glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.70f else 0.42f)
+                        ambientColor = glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.50f else 0.30f),
+                        spotColor = glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.65f else 0.38f)
                     )
                     .clip(shape)
                     .then(
@@ -298,15 +322,7 @@ fun LiquidGlassSurface(
                 border = BorderStroke(1.2.dp, bevelBrush)
             ) {
                 Box(
-                    modifier = Modifier.background(
-                        Brush.linearGradient(
-                            colors = listOf(
-                                glass.reliefShadowLight.copy(alpha = if (glass.isDark) 0.08f else 0.70f),
-                                fill,
-                                glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.12f else 0.045f)
-                            )
-                        )
-                    ),
+                    modifier = Modifier.background(innerSurfaceBrush),
                     content = content
                 )
             }
@@ -314,19 +330,26 @@ fun LiquidGlassSurface(
 
         SurfaceMaterial.AMOLED_CRISP -> {
             val fill = if (elevated) glass.surfaceElevated else glass.surface
-            val borderColor = if (elevated && accentGlow != null) {
-                accentGlow.copy(alpha = if (glass.isDark) 0.55f else 0.35f)
-            } else {
-                glass.glassBorder
+            val borderColor = remember(elevated, accentGlow, glass.isDark, glass.glassBorder) {
+                if (elevated && accentGlow != null) {
+                    accentGlow.copy(alpha = if (glass.isDark) 0.55f else 0.35f)
+                } else {
+                    glass.glassBorder
+                }
             }
+            val shadowDp = if (glass.isDark) 0.dp else if (elevated) 3.dp else 0.dp
             Surface(
                 modifier = modifier
                     .then(scaleMod)
-                    .shadow(
-                        elevation = if (glass.isDark) 0.dp else if (elevated) 3.dp else 1.dp,
-                        shape = shape,
-                        ambientColor = glass.textPrimary.copy(alpha = 0.08f),
-                        spotColor = glass.textPrimary.copy(alpha = 0.10f)
+                    .then(
+                        if (shadowDp > 0.dp) {
+                            Modifier.shadow(
+                                elevation = shadowDp,
+                                shape = shape,
+                                ambientColor = glass.textPrimary.copy(alpha = 0.08f),
+                                spotColor = glass.textPrimary.copy(alpha = 0.10f)
+                            )
+                        } else Modifier
                     )
                     .clip(shape)
                     .then(
@@ -349,52 +372,63 @@ fun LiquidGlassSurface(
 
         SurfaceMaterial.LIQUID_GLASS -> {
             val baseFill = if (elevated) glass.glassElevated else glass.glassSurface
-            val sheenBrush = Brush.linearGradient(
-                colors = listOf(
-                    Color.White.copy(alpha = if (glass.isDark) 0.11f else 0.30f),
-                    Color.Transparent,
-                    (accentGlow ?: glass.accentPrimary).copy(alpha = if (glass.isDark) 0.08f else 0.07f)
-                )
-            )
-            val borderBrush = Brush.verticalGradient(
-                colors = if (glass.isDark) {
-                    listOf(glass.glassBorderTop, glass.glassBorderBottom)
-                } else {
-                    listOf(
-                        Color.White.copy(alpha = 0.94f),
-                        lerp(glass.glassBorderBottom, (accentGlow ?: glass.accentPrimary).copy(alpha = 0.26f), 0.38f)
+            val effectiveAccent = accentGlow ?: glass.accentPrimary
+            val sheenBrush = remember(glass.isDark, effectiveAccent) {
+                Brush.linearGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = if (glass.isDark) 0.11f else 0.30f),
+                        Color.Transparent,
+                        effectiveAccent.copy(alpha = if (glass.isDark) 0.08f else 0.07f)
                     )
-                }
-            )
+                )
+            }
+            val borderBrush = remember(glass.isDark, glass.glassBorderTop, glass.glassBorderBottom, effectiveAccent) {
+                Brush.verticalGradient(
+                    colors = if (glass.isDark) {
+                        listOf(glass.glassBorderTop, glass.glassBorderBottom)
+                    } else {
+                        listOf(
+                            Color.White.copy(alpha = 0.94f),
+                            lerp(glass.glassBorderBottom, effectiveAccent.copy(alpha = 0.26f), 0.38f)
+                        )
+                    }
+                )
+            }
 
             val shadowDp: Dp = if (glass.isDark) {
                 when (glass.glassQuality) {
-                    GlassQuality.MINIMAL -> 1.dp
-                    GlassQuality.BALANCED -> if (elevated) 8.dp else 4.dp
-                    GlassQuality.ULTRA -> if (elevated) 14.dp else 7.dp
+                    GlassQuality.MINIMAL -> 0.dp
+                    GlassQuality.BALANCED -> if (elevated) 6.dp else 0.dp
+                    GlassQuality.ULTRA -> if (elevated) 10.dp else 3.dp
                 }
             } else {
                 when (glass.glassQuality) {
-                    GlassQuality.MINIMAL -> 1.dp
-                    GlassQuality.BALANCED -> if (elevated) 5.dp else 2.5.dp
-                    GlassQuality.ULTRA -> if (elevated) 8.dp else 4.dp
+                    GlassQuality.MINIMAL -> 0.dp
+                    GlassQuality.BALANCED -> if (elevated) 4.dp else 0.dp
+                    GlassQuality.ULTRA -> if (elevated) 6.dp else 2.dp
                 }
             }
 
-            val shadowColor = if (glass.isDark) {
-                (accentGlow ?: glass.accentPrimary).copy(alpha = 0.20f)
-            } else {
-                lerp(glass.textPrimary, accentGlow ?: glass.accentPrimary, 0.38f).copy(alpha = 0.14f)
+            val shadowColor = remember(glass.isDark, glass.textPrimary, effectiveAccent) {
+                if (glass.isDark) {
+                    effectiveAccent.copy(alpha = 0.20f)
+                } else {
+                    lerp(glass.textPrimary, effectiveAccent, 0.38f).copy(alpha = 0.14f)
+                }
             }
 
             Surface(
                 modifier = modifier
                     .then(scaleMod)
-                    .shadow(
-                        elevation = shadowDp,
-                        shape = shape,
-                        ambientColor = shadowColor,
-                        spotColor = shadowColor
+                    .then(
+                        if (shadowDp > 0.dp) {
+                            Modifier.shadow(
+                                elevation = shadowDp,
+                                shape = shape,
+                                ambientColor = shadowColor,
+                                spotColor = shadowColor
+                            )
+                        } else Modifier
                     )
                     .clip(shape)
                     .then(
@@ -451,33 +485,31 @@ fun LiquidGlassCapsule(
                     )
                     .clip(shape)
                     .background(fill)
-                    .drawBehind {
+                    .drawWithCache {
                         val r = size.height / 2f
                         val corner = CornerRadius(r, r)
-                        drawRoundRect(
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    glass.reliefShadowLight.copy(alpha = if (glass.isDark) 0.16f else 0.62f),
-                                    Color.Transparent,
-                                    glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.24f else 0.14f)
-                                ),
-                                start = Offset(0f, 0f),
-                                end = Offset(size.width, size.height)
+                        val bodyBrush = Brush.linearGradient(
+                            colors = listOf(
+                                glass.reliefShadowLight.copy(alpha = if (glass.isDark) 0.16f else 0.62f),
+                                Color.Transparent,
+                                glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.24f else 0.14f)
                             ),
-                            cornerRadius = corner
+                            start = Offset(0f, 0f),
+                            end = Offset(size.width, size.height)
                         )
-                        drawRoundRect(
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    glass.reliefShadowLight,
-                                    glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.90f else 0.68f)
-                                ),
-                                start = Offset(0f, 0f),
-                                end = Offset(0f, size.height)
+                        val strokeBrush = Brush.linearGradient(
+                            colors = listOf(
+                                glass.reliefShadowLight,
+                                glass.reliefShadowDark.copy(alpha = if (glass.isDark) 0.90f else 0.68f)
                             ),
-                            cornerRadius = corner,
-                            style = Stroke(width = 1.3.dp.toPx())
+                            start = Offset(0f, 0f),
+                            end = Offset(0f, size.height)
                         )
+                        val stroke = Stroke(width = 1.3.dp.toPx())
+                        onDrawBehind {
+                            drawRoundRect(brush = bodyBrush, cornerRadius = corner)
+                            drawRoundRect(brush = strokeBrush, cornerRadius = corner, style = stroke)
+                        }
                     },
                 content = content
             )
@@ -495,10 +527,12 @@ fun LiquidGlassCapsule(
             } else {
                 if (elevated) 16.dp else 5.dp
             }
-            val softShadowColor = if (glass.isDark) {
-                lerp(Color(0xFF060812), glass.accentPrimary, 0.22f).copy(alpha = 0.66f)
-            } else {
-                lerp(glass.reliefShadowDark, glass.accentPrimary, 0.28f).copy(alpha = 0.34f)
+            val softShadowColor = remember(glass.isDark, glass.accentPrimary, glass.reliefShadowDark) {
+                if (glass.isDark) {
+                    lerp(Color(0xFF060812), glass.accentPrimary, 0.22f).copy(alpha = 0.66f)
+                } else {
+                    lerp(glass.reliefShadowDark, glass.accentPrimary, 0.28f).copy(alpha = 0.34f)
+                }
             }
 
             Box(
@@ -511,83 +545,77 @@ fun LiquidGlassCapsule(
                     )
                     .clip(shape)
                     .background(opticalFill)
-                    .drawBehind {
+                    .drawWithCache {
                         val r = size.height / 2f
                         val corner = CornerRadius(r, r)
-
-                        // Translucent crystal body wash with subtle rose refraction
-                        drawRoundRect(
-                            brush = Brush.linearGradient(
-                                colors = if (glass.isDark) {
-                                    listOf(
-                                        Color.White.copy(alpha = 0.16f),
-                                        glass.accentPrimary.copy(alpha = 0.10f),
-                                        glass.accentSecondary.copy(alpha = 0.08f),
-                                        Color.White.copy(alpha = 0.08f)
-                                    )
-                                } else {
-                                    listOf(
-                                        Color.White.copy(alpha = 0.92f),
-                                        glass.accentPrimary.copy(alpha = 0.06f),
-                                        glass.accentSecondary.copy(alpha = 0.08f),
-                                        Color.White.copy(alpha = 0.78f)
-                                    )
-                                },
-                                start = Offset(0f, 0f),
-                                end = Offset(size.width, size.height)
-                            ),
-                            cornerRadius = corner
+                        val bodyBrush = Brush.linearGradient(
+                            colors = if (glass.isDark) {
+                                listOf(
+                                    Color.White.copy(alpha = 0.16f),
+                                    glass.accentPrimary.copy(alpha = 0.10f),
+                                    glass.accentSecondary.copy(alpha = 0.08f),
+                                    Color.White.copy(alpha = 0.08f)
+                                )
+                            } else {
+                                listOf(
+                                    Color.White.copy(alpha = 0.92f),
+                                    glass.accentPrimary.copy(alpha = 0.06f),
+                                    glass.accentSecondary.copy(alpha = 0.08f),
+                                    Color.White.copy(alpha = 0.78f)
+                                )
+                            },
+                            start = Offset(0f, 0f),
+                            end = Offset(size.width, size.height)
                         )
-
-                        // Curved upper-lip optical meniscus highlight
-                        if (glass.glassQuality != GlassQuality.MINIMAL) {
-                            drawRoundRect(
-                                brush = Brush.verticalGradient(
-                                    0.0f to Color.White.copy(alpha = if (glass.isDark) 0.30f else 0.98f),
-                                    0.34f to Color.White.copy(alpha = if (glass.isDark) 0.07f else 0.28f),
-                                    0.58f to Color.Transparent,
-                                    1.0f to glass.accentPrimary.copy(alpha = if (glass.isDark) 0.10f else 0.09f)
-                                ),
-                                cornerRadius = corner
+                        val meniscusBrush = if (glass.glassQuality != GlassQuality.MINIMAL) {
+                            Brush.verticalGradient(
+                                0.0f to Color.White.copy(alpha = if (glass.isDark) 0.30f else 0.98f),
+                                0.34f to Color.White.copy(alpha = if (glass.isDark) 0.07f else 0.28f),
+                                0.58f to Color.Transparent,
+                                1.0f to glass.accentPrimary.copy(alpha = if (glass.isDark) 0.10f else 0.09f)
                             )
-
-                            // Specular glass orb glint near upper-right rim
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = if (glass.isDark) 0.22f else 0.76f),
-                                        Color.Transparent
-                                    ),
-                                    center = Offset(size.width * 0.82f, size.height * 0.22f),
-                                    radius = size.height * 0.92f
+                        } else null
+                        val glintCenter = Offset(size.width * 0.82f, size.height * 0.22f)
+                        val glintRadius = (size.height * 0.92f).coerceAtLeast(1f)
+                        val glintBrush = if (glass.glassQuality != GlassQuality.MINIMAL) {
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = if (glass.isDark) 0.22f else 0.76f),
+                                    Color.Transparent
                                 ),
-                                center = Offset(size.width * 0.82f, size.height * 0.22f),
-                                radius = size.height * 0.92f
+                                center = glintCenter,
+                                radius = glintRadius
                             )
+                        } else null
+                        val rimBrush = Brush.linearGradient(
+                            colors = if (glass.isDark) {
+                                listOf(
+                                    Color.White.copy(alpha = 0.56f),
+                                    glass.accentPrimary.copy(alpha = 0.26f),
+                                    glass.reliefShadowDark.copy(alpha = 0.75f)
+                                )
+                            } else {
+                                listOf(
+                                    Color.White,
+                                    glass.accentSecondary.copy(alpha = 0.24f),
+                                    lerp(glass.reliefShadowDark, glass.accentPrimary, 0.24f).copy(alpha = 0.45f)
+                                )
+                            },
+                            start = Offset(0f, 0f),
+                            end = Offset(0f, size.height)
+                        )
+                        val rimStroke = Stroke(width = 1.4.dp.toPx())
+                        onDrawBehind {
+                            if (size.minDimension <= 1f) return@onDrawBehind
+                            drawRoundRect(brush = bodyBrush, cornerRadius = corner)
+                            if (meniscusBrush != null) {
+                                drawRoundRect(brush = meniscusBrush, cornerRadius = corner)
+                            }
+                            if (glintBrush != null) {
+                                drawCircle(brush = glintBrush, center = glintCenter, radius = glintRadius)
+                            }
+                            drawRoundRect(brush = rimBrush, cornerRadius = corner, style = rimStroke)
                         }
-
-                        // Beveled Fresnel crystal rim
-                        drawRoundRect(
-                            brush = Brush.linearGradient(
-                                colors = if (glass.isDark) {
-                                    listOf(
-                                        Color.White.copy(alpha = 0.56f),
-                                        glass.accentPrimary.copy(alpha = 0.26f),
-                                        glass.reliefShadowDark.copy(alpha = 0.75f)
-                                    )
-                                } else {
-                                    listOf(
-                                        Color.White,
-                                        glass.accentSecondary.copy(alpha = 0.24f),
-                                        lerp(glass.reliefShadowDark, glass.accentPrimary, 0.24f).copy(alpha = 0.45f)
-                                    )
-                                },
-                                start = Offset(0f, 0f),
-                                end = Offset(0f, size.height)
-                            ),
-                            cornerRadius = corner,
-                            style = Stroke(width = 1.4.dp.toPx())
-                        )
                     }
                     .border(
                         width = 0.6.dp,
@@ -604,13 +632,18 @@ fun LiquidGlassCapsule(
                 glass.isDark -> glass.surface
                 else -> Color(0xFFEDF2F7)
             }
+            val shadowDp = if (glass.isDark) 0.dp else if (elevated) 8.dp else 2.dp
             Box(
                 modifier = modifier
-                    .shadow(
-                        elevation = if (glass.isDark) 0.dp else if (elevated) 8.dp else 2.dp,
-                        shape = shape,
-                        ambientColor = glass.textPrimary.copy(alpha = 0.12f),
-                        spotColor = glass.textPrimary.copy(alpha = 0.16f)
+                    .then(
+                        if (shadowDp > 0.dp) {
+                            Modifier.shadow(
+                                elevation = shadowDp,
+                                shape = shape,
+                                ambientColor = glass.textPrimary.copy(alpha = 0.12f),
+                                spotColor = glass.textPrimary.copy(alpha = 0.16f)
+                            )
+                        } else Modifier
                     )
                     .clip(shape)
                     .background(fill)
@@ -624,11 +657,13 @@ fun LiquidGlassCapsule(
         }
 
         SurfaceMaterial.LIQUID_GLASS -> {
-            val lightFrostCapsule = lerp(
-                Color.White,
-                glass.backgroundSecondary,
-                if (elevated) 0.12f else 0.28f
-            )
+            val lightFrostCapsule = remember(glass.backgroundSecondary, elevated) {
+                lerp(
+                    Color.White,
+                    glass.backgroundSecondary,
+                    if (elevated) 0.12f else 0.28f
+                )
+            }
             val opticalBase = when {
                 glass.glassQuality == GlassQuality.MINIMAL ->
                     if (elevated) glass.glassElevated else glass.glassSurface
@@ -638,23 +673,25 @@ fun LiquidGlassCapsule(
                     lightFrostCapsule.copy(alpha = if (elevated) 0.52f else 0.64f)
             }
 
-            val shadowColor = if (glass.isDark) {
-                lerp(Color(0xFF01040B), glass.accentPrimary, 0.16f).copy(alpha = 0.68f)
-            } else {
-                lerp(glass.textPrimary, glass.accentPrimary, 0.42f).copy(alpha = 0.22f)
+            val shadowColor = remember(glass.isDark, glass.accentPrimary, glass.textPrimary) {
+                if (glass.isDark) {
+                    lerp(Color(0xFF01040B), glass.accentPrimary, 0.16f).copy(alpha = 0.68f)
+                } else {
+                    lerp(glass.textPrimary, glass.accentPrimary, 0.42f).copy(alpha = 0.22f)
+                }
             }
 
             val shadowDp = if (glass.isDark) {
                 when (glass.glassQuality) {
                     GlassQuality.MINIMAL -> if (elevated) 6.dp else 3.dp
-                    GlassQuality.BALANCED -> if (elevated) 18.dp else 10.dp
-                    GlassQuality.ULTRA -> if (elevated) 26.dp else 14.dp
+                    GlassQuality.BALANCED -> if (elevated) 14.dp else 8.dp
+                    GlassQuality.ULTRA -> if (elevated) 22.dp else 12.dp
                 }
             } else {
                 when (glass.glassQuality) {
                     GlassQuality.MINIMAL -> if (elevated) 3.dp else 1.5.dp
-                    GlassQuality.BALANCED -> if (elevated) 10.dp else 4.dp
-                    GlassQuality.ULTRA -> if (elevated) 16.dp else 6.dp
+                    GlassQuality.BALANCED -> if (elevated) 8.dp else 4.dp
+                    GlassQuality.ULTRA -> if (elevated) 14.dp else 5.dp
                 }
             }
 
@@ -668,81 +705,79 @@ fun LiquidGlassCapsule(
                     )
                     .clip(shape)
                     .background(opticalBase)
-                    .drawBehind {
+                    .drawWithCache {
                         val r = size.height / 2f
                         val corner = CornerRadius(r, r)
-
-                        drawRoundRect(
-                            brush = Brush.linearGradient(
-                                colors = if (glass.isDark) {
-                                    listOf(
-                                        Color.White.copy(alpha = 0.18f),
-                                        Color.White.copy(alpha = 0.04f),
-                                        glass.accentSecondary.copy(alpha = 0.15f),
-                                        Color.White.copy(alpha = 0.12f)
-                                    )
-                                } else {
-                                    listOf(
-                                        Color.White.copy(alpha = 0.28f),
-                                        glass.accentPrimary.copy(alpha = 0.08f),
-                                        glass.accentSecondary.copy(alpha = 0.08f),
-                                        Color.White.copy(alpha = 0.16f)
-                                    )
-                                },
-                                start = Offset(0f, 0f),
-                                end = Offset(size.width, size.height)
-                            ),
-                            cornerRadius = corner
+                        val bodyBrush = Brush.linearGradient(
+                            colors = if (glass.isDark) {
+                                listOf(
+                                    Color.White.copy(alpha = 0.18f),
+                                    Color.White.copy(alpha = 0.04f),
+                                    glass.accentSecondary.copy(alpha = 0.15f),
+                                    Color.White.copy(alpha = 0.12f)
+                                )
+                            } else {
+                                listOf(
+                                    Color.White.copy(alpha = 0.28f),
+                                    glass.accentPrimary.copy(alpha = 0.08f),
+                                    glass.accentSecondary.copy(alpha = 0.08f),
+                                    Color.White.copy(alpha = 0.16f)
+                                )
+                            },
+                            start = Offset(0f, 0f),
+                            end = Offset(size.width, size.height)
                         )
-
-                        if (glass.glassQuality != GlassQuality.MINIMAL) {
-                            drawRoundRect(
-                                brush = Brush.verticalGradient(
-                                    0.0f to Color.White.copy(alpha = if (glass.isDark) 0.30f else 0.76f),
-                                    0.28f to Color.White.copy(alpha = if (glass.isDark) 0.07f else 0.14f),
-                                    0.54f to Color.Transparent,
-                                    1.0f to glass.accentPrimary.copy(alpha = if (glass.isDark) 0.09f else 0.10f)
-                                ),
-                                cornerRadius = corner
+                        val meniscusBrush = if (glass.glassQuality != GlassQuality.MINIMAL) {
+                            Brush.verticalGradient(
+                                0.0f to Color.White.copy(alpha = if (glass.isDark) 0.30f else 0.76f),
+                                0.28f to Color.White.copy(alpha = if (glass.isDark) 0.07f else 0.14f),
+                                0.54f to Color.Transparent,
+                                1.0f to glass.accentPrimary.copy(alpha = if (glass.isDark) 0.09f else 0.10f)
                             )
-
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = if (glass.isDark) 0.24f else 0.45f),
-                                        Color.Transparent
-                                    ),
-                                    center = Offset(size.width * 0.82f, size.height * 0.22f),
-                                    radius = size.height * 0.92f
+                        } else null
+                        val glintCenter = Offset(size.width * 0.82f, size.height * 0.22f)
+                        val glintRadius = (size.height * 0.92f).coerceAtLeast(1f)
+                        val glintBrush = if (glass.glassQuality != GlassQuality.MINIMAL) {
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = if (glass.isDark) 0.24f else 0.45f),
+                                    Color.Transparent
                                 ),
-                                center = Offset(size.width * 0.82f, size.height * 0.22f),
-                                radius = size.height * 0.92f
+                                center = glintCenter,
+                                radius = glintRadius
                             )
+                        } else null
+                        val rimBrush = Brush.linearGradient(
+                            colors = if (glass.isDark) {
+                                listOf(
+                                    Color.White.copy(alpha = 0.62f),
+                                    Color.White.copy(alpha = 0.16f),
+                                    glass.accentSecondary.copy(alpha = 0.34f),
+                                    Color.White.copy(alpha = 0.30f)
+                                )
+                            } else {
+                                listOf(
+                                    Color.White,
+                                    glass.accentPrimary.copy(alpha = 0.24f),
+                                    glass.textPrimary.copy(alpha = 0.14f),
+                                    Color.White.copy(alpha = 0.92f)
+                                )
+                            },
+                            start = Offset(0f, 0f),
+                            end = Offset(0f, size.height)
+                        )
+                        val rimStroke = Stroke(width = 1.35.dp.toPx())
+                        onDrawBehind {
+                            if (size.minDimension <= 1f) return@onDrawBehind
+                            drawRoundRect(brush = bodyBrush, cornerRadius = corner)
+                            if (meniscusBrush != null) {
+                                drawRoundRect(brush = meniscusBrush, cornerRadius = corner)
+                            }
+                            if (glintBrush != null) {
+                                drawCircle(brush = glintBrush, center = glintCenter, radius = glintRadius)
+                            }
+                            drawRoundRect(brush = rimBrush, cornerRadius = corner, style = rimStroke)
                         }
-
-                        drawRoundRect(
-                            brush = Brush.linearGradient(
-                                colors = if (glass.isDark) {
-                                    listOf(
-                                        Color.White.copy(alpha = 0.62f),
-                                        Color.White.copy(alpha = 0.16f),
-                                        glass.accentSecondary.copy(alpha = 0.34f),
-                                        Color.White.copy(alpha = 0.30f)
-                                    )
-                                } else {
-                                    listOf(
-                                        Color.White,
-                                        glass.accentPrimary.copy(alpha = 0.24f),
-                                        glass.textPrimary.copy(alpha = 0.14f),
-                                        Color.White.copy(alpha = 0.92f)
-                                    )
-                                },
-                                start = Offset(0f, 0f),
-                                end = Offset(0f, size.height)
-                            ),
-                            cornerRadius = corner,
-                            style = Stroke(width = 1.35.dp.toPx())
-                        )
                     }
                     .border(
                         width = 0.6.dp,
@@ -849,9 +884,11 @@ fun SculptedCircleButton(
     )
 }
 
+val LocalSkipSectionEntrance = compositionLocalOf { false }
+
 /**
  * Staggered spring entrance wrapper for sections across Home, Library, and Settings.
- * Instant and deterministic when reduceMotion is active.
+ * Instant and deterministic when reduceMotion is active or when revisiting an already-entered tab.
  */
 @Composable
 fun LumaSectionEntrance(
@@ -860,7 +897,8 @@ fun LumaSectionEntrance(
     content: @Composable () -> Unit
 ) {
     val glass = LocalLumaGlass.current
-    if (glass.reduceMotion) {
+    val skipEntrance = LocalSkipSectionEntrance.current
+    if (glass.reduceMotion || skipEntrance) {
         Box(modifier = modifier) { content() }
         return
     }
@@ -869,7 +907,7 @@ fun LumaSectionEntrance(
     val shiftPx = with(density) { 14.dp.toPx() }
 
     LaunchedEffect(Unit) {
-        val delayMs = (index.coerceIn(0, 6) * 32L)
+        val delayMs = (index.coerceIn(0, 6) * 26L)
         if (delayMs > 0L) kotlinx.coroutines.delay(delayMs)
         progress.animateTo(
             targetValue = 1f,
@@ -1162,22 +1200,34 @@ fun MediaArtwork(
     contentDescription: String?,
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 14.dp,
-    shapeOverride: Shape? = null
+    shapeOverride: Shape? = null,
+    maxDecodeSize: Dp = 140.dp
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val shape = shapeOverride ?: resolveArtworkShape(defaultCornerRadius = cornerRadius)
-    val imageModel: Any? = when {
-        artworkPath.isNullOrBlank() -> null
-        artworkPath.startsWith("content://") || artworkPath.startsWith("file://") -> artworkPath
-        else -> File(artworkPath).takeIf { it.exists() && it.length() > 0L }
+    val imageModel: Any? = remember(artworkPath) {
+        when {
+            artworkPath.isNullOrBlank() -> null
+            artworkPath.startsWith("content://") || artworkPath.startsWith("file://") -> artworkPath
+            else -> File(artworkPath)
+        }
     }
 
     if (imageModel != null) {
-        AsyncImage(
-            model = ImageRequest.Builder(context)
+        val targetPx = remember(density, maxDecodeSize) {
+            with(density) { maxDecodeSize.roundToPx().coerceIn(64, 1024) }
+        }
+        val imageRequest = remember(context, imageModel, targetPx) {
+            ImageRequest.Builder(context)
                 .data(imageModel)
-                .crossfade(true)
-                .build(),
+                .size(targetPx)
+                .precision(coil.size.Precision.INEXACT)
+                .crossfade(if (targetPx <= 280) 0 else 140)
+                .build()
+        }
+        AsyncImage(
+            model = imageRequest,
             contentDescription = contentDescription,
             contentScale = ContentScale.Crop,
             error = painterResource(id = R.drawable.img_default_album_art),
